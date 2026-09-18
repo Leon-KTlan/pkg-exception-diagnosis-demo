@@ -121,6 +121,7 @@ export class DeepSeekGateway implements ModelGateway {
         body: JSON.stringify({
           model: this.config.model,
           temperature: 0,
+          thinking: { type: "disabled" },
           ...body,
         }),
       },
@@ -219,7 +220,7 @@ export class DeepSeekGateway implements ModelGateway {
         {
           role: "system",
           content:
-            "你是仓储异常诊断专家。只输出 JSON，字段为 status、summary、reason、severity、evidenceIds、actions、limitations。status 只能是 CONFIRMED 或 INSUFFICIENT_EVIDENCE；actions 每项必须包含 title、description、priority(P0|P1|P2)、owner。只能引用输入中存在的 evidenceId。所有自然语言使用中文。",
+            "你是仓储异常诊断专家。只输出 JSON，字段为 status、summary、reason、severity、evidenceIds、actions、limitations。status 只能是 CONFIRMED 或 INSUFFICIENT_EVIDENCE；severity 只能是 LOW、MEDIUM 或 HIGH，禁止使用 NONE、UNKNOWN 等其他值；actions 每项必须包含 title、description、priority(P0|P1|P2)、owner。只能引用输入中存在的 evidenceId。当 allowedEvidence 为空时，status 必须为 INSUFFICIENT_EVIDENCE、severity 必须为 LOW、evidenceIds 必须为空数组。若 validationError 非空，必须按照错误信息修正结果。所有自然语言使用中文。",
         },
         {
           role: "user",
