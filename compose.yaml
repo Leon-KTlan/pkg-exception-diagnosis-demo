@@ -1,0 +1,19 @@
+services:
+  diagnosis-console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
+      PORT: 8787
+    ports:
+      - "5173:8787"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8787/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s

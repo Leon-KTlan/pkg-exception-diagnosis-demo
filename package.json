@@ -1,0 +1,35 @@
+{
+  "name": "pkg-exception-diagnosis-demo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n WEB,AGENT -c cyan,yellow \"vite --host 0.0.0.0\" \"tsx watch server/index.ts\"",
+    "build": "tsc -b && vite build && tsc -p server/tsconfig.json",
+    "start": "node dist-server/server/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/supertest": "^6.0.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^9.2.1",
+    "supertest": "^7.1.4",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.20.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}
