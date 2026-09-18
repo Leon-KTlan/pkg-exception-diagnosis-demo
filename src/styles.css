@@ -561,9 +561,23 @@ footer {
   white-space: nowrap;
 }
 
+.step-meta {
+  align-self: center;
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.timeline-status {
+  padding: 3px 5px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  font: 600 8px/1 "SFMono-Regular", monospace;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
 .step-duration {
-  align-self: start;
-  padding-top: 4px;
   color: #92978f;
   font-size: 8px;
 }

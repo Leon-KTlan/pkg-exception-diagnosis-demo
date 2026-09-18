@@ -49,6 +49,8 @@ const statusIcons: Record<StepStatus, ReactNode> = {
   BLOCKED: <ShieldAlert size={14} />,
 };
 
+const EXPECTED_EVIDENCE_COUNT = 4;
+
 const formatDuration = (milliseconds?: number) => {
   if (milliseconds === undefined) return "—";
   if (milliseconds < 1000) return `${milliseconds} ms`;
@@ -127,7 +129,17 @@ export const StepTimeline = ({
               <strong>{step.title}</strong>
               <small>{step.description}</small>
             </span>
-            <span className="step-duration">{formatDuration(step.durationMs)}</span>
+            <span className="step-meta">
+              <span
+                className={classNames(
+                  "timeline-status",
+                  `status-${step.status.toLowerCase()}`,
+                )}
+              >
+                {statusLabels[step.status]}
+              </span>
+              <span className="step-duration">{formatDuration(step.durationMs)}</span>
+            </span>
           </button>
           {index < steps.length - 1 && <span className="timeline-rail" />}
         </li>
@@ -231,7 +243,9 @@ export const EvidenceChain = ({ evidence }: { evidence: Evidence[] }) => (
         <span className="eyebrow">事实溯源</span>
         <h2>证据链</h2>
       </div>
-      <span className="evidence-score">{evidence.length}/4</span>
+      <span className="evidence-score">
+        {evidence.length}/{EXPECTED_EVIDENCE_COUNT}
+      </span>
     </div>
 
     {evidence.length === 0 ? (
@@ -301,7 +315,10 @@ export const DiagnosisPanel = ({
         <div className="diagnosis-flags">
           <span>{diagnosis.status}</span>
           <span>严重度：{severityLabels[diagnosis.severity]}</span>
-          <span>证据：{diagnosis.evidenceIds.length}/{Math.max(evidence.length, 1)}</span>
+          <span>
+            证据：{diagnosis.evidenceIds.length}/
+            {Math.max(evidence.length, EXPECTED_EVIDENCE_COUNT)}
+          </span>
         </div>
       </div>
       <p className="diagnosis-reason">{diagnosis.reason}</p>
