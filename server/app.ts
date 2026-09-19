@@ -1,10 +1,14 @@
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { TraceEvent } from "../shared/protocol.js";
 import { DeepSeekGateway, type ModelGateway } from "./model.js";
 import { runDiagnosis } from "./orchestrator.js";
-import { extractPackageIds } from "./package-id.js";
+import { validateDiagnosisRequest } from "./request-validation.js";
+import {
+  createSseSender,
+  finishSseResponse,
+  prepareSseResponse,
+} from "./sse.js";
 import { createWarehouseTools, type ToolRegistry } from "./tools.js";
 
 export interface AppDependencies {
@@ -42,38 +46,12 @@ export const createApp = (dependencies: AppDependencies = {}) => {
   });
 
   app.post("/api/diagnoses/stream", async (request, response) => {
-    const rawQuestion = request.body?.question;
-    if (typeof rawQuestion !== "string") {
-      response.status(400).json({ error: "问题必须是字符串" });
+    const validation = validateDiagnosisRequest(request.body);
+    if (!validation.ok) {
+      response.status(400).json({ error: validation.error });
       return;
     }
-
-    const question = rawQuestion.trim();
-    if (!question) {
-      response.status(400).json({ error: "问题不能为空" });
-      return;
-    }
-    if (Array.from(question).length > 500) {
-      response.status(400).json({
-        error: "问题长度不能超过500个Unicode字符",
-      });
-      return;
-    }
-
-    const packageIds = extractPackageIds(question);
-    if (packageIds.length === 0) {
-      response.status(400).json({
-        error: "请补充包裹号",
-      });
-      return;
-    }
-    if (packageIds.length > 1) {
-      response.status(400).json({
-        error: "一次只能诊断一个包裹",
-      });
-      return;
-    }
-    const packageId = packageIds[0];
+    const { question, packageId } = validation.value;
 
     let model: ModelGateway;
     try {
@@ -85,17 +63,8 @@ export const createApp = (dependencies: AppDependencies = {}) => {
       return;
     }
 
-    response.status(200);
-    response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-    response.setHeader("Cache-Control", "no-cache, no-transform");
-    response.setHeader("Connection", "keep-alive");
-    response.setHeader("X-Accel-Buffering", "no");
-    response.flushHeaders();
-
-    const send = (event: TraceEvent) => {
-      response.write(`event: ${event.type}\n`);
-      response.write(`data: ${JSON.stringify(event)}\n\n`);
-    };
+    prepareSseResponse(response);
+    const send = createSseSender(response);
 
     await runDiagnosis({
       question,
@@ -106,9 +75,7 @@ export const createApp = (dependencies: AppDependencies = {}) => {
       minimumStepMs: dependencies.minimumStepMs,
     });
 
-    if (!response.writableEnded) {
-      response.end();
-    }
+    finishSseResponse(response);
   });
 
   if (process.env.NODE_ENV === "production") {

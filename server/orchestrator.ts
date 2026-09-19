@@ -266,6 +266,8 @@ export const runDiagnosis = async ({
   };
 
   await emit<TraceStartedPayload>("trace.started", {
+    mode: "live",
+    simulated: false,
     question,
     model: model.modelName,
     steps: STEP_DEFINITIONS,

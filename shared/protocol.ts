@@ -19,6 +19,8 @@ export type StepStatus =
 
 export type TraceStatus = "IDLE" | "RUNNING" | "COMPLETED" | "FAILED";
 
+export type TraceMode = "live" | "demo";
+
 export interface StepDefinition {
   id: StepId;
   title: string;
@@ -86,6 +88,8 @@ export interface TraceEvent<T = Record<string, unknown>> {
 }
 
 export interface TraceStartedPayload {
+  mode: TraceMode;
+  simulated: boolean;
   question: string;
   model: string;
   steps: StepDefinition[];

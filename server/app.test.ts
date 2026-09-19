@@ -130,6 +130,10 @@ describe("POST /api/diagnoses/stream", () => {
       .expect("Content-Type", /text\/event-stream/);
 
     const events = parseEvents(response.text);
+    expect(events.find((event) => event.type === "trace.started")?.payload).toMatchObject({
+      mode: "live",
+      simulated: false,
+    });
     expect(events.map((event) => event.sequence)).toEqual(
       events.map((_, index) => index + 1),
     );

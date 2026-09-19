@@ -21,6 +21,8 @@ describe("traceReducer", () => {
     const started = traceReducer(createInitialTraceState(), {
       type: "event",
       event: event(1, "trace.started", {
+        mode: "live",
+        simulated: false,
         question: "包裹 PKG-20260918 为什么还没有入库？",
         model: "fake-deepseek",
         steps: STEP_DEFINITIONS,
