@@ -112,6 +112,7 @@ const createTestApp = (
       },
       tools: createWarehouseTools(),
       minimumStepMs: 0,
+      demoDelayScale: 0,
     }),
     model,
     modelFactoryCalls,
@@ -347,5 +348,80 @@ describe("POST /api/diagnoses/stream", () => {
     expect(rejected.modelFactoryCalls.count).toBe(0);
     expect(rejected.model.identifyCalls).toBe(0);
     expect(rejected.model.toolSelectionCalls).toBe(0);
+  });
+});
+
+describe("POST /api/demo/diagnoses/stream", () => {
+  it("replays the success diagnosis without invoking Live dependencies", async () => {
+    const { app, model, modelFactoryCalls } = createTestApp();
+    const question = "请查看（pkg-20260918），为什么还没入库？";
+    const response = await request(app)
+      .post("/api/demo/diagnoses/stream")
+      .send({ question })
+      .expect(200)
+      .expect("Content-Type", /text\/event-stream/);
+
+    const events = parseEvents(response.text);
+    const started = events.find((event) => event.type === "trace.started");
+    const completed = events.at(-1);
+    const completedPayload = completed?.payload as unknown as TraceCompletedPayload;
+
+    expect(started?.payload).toMatchObject({
+      mode: "demo",
+      simulated: true,
+      question,
+      model: "固定回放",
+    });
+    expect(events.map((event) => event.sequence)).toEqual(
+      events.map((_, index) => index + 1),
+    );
+    expect(new Set(events.map((event) => event.traceId)).size).toBe(1);
+    expect(
+      events.find((event) => event.type === "step.started" && event.stepId === "identify")?.payload,
+    ).toMatchObject({ input: { question } });
+    expect(
+      events.find((event) => event.type === "step.completed" && event.stepId === "identify")?.payload,
+    ).toMatchObject({
+      output: {
+        packageId: "PKG-20260918",
+        normalizedQuestion: question,
+      },
+    });
+    expect(events.filter((event) => event.type === "tool.call.started")).toHaveLength(3);
+    expect(events.filter((event) => event.type === "tool.call.completed")).toHaveLength(3);
+    expect(completed?.type).toBe("trace.completed");
+    expect(completedPayload.toolCallCount).toBe(3);
+    expect(completedPayload.tokenUsage).toBeUndefined();
+    expect(completedPayload.evidence).toHaveLength(4);
+    expect(modelFactoryCalls.count).toBe(0);
+    expect(model.identifyCalls).toBe(0);
+    expect(model.toolSelectionCalls).toBe(0);
+  });
+
+  it("creates an independent trace for each success replay", async () => {
+    const { app } = createTestApp();
+    const body = { question: "包裹 PKG-20260918 为什么还没有入库？" };
+
+    const first = parseEvents(
+      (
+        await request(app)
+          .post("/api/demo/diagnoses/stream")
+          .send(body)
+          .expect(200)
+      ).text,
+    );
+    const second = parseEvents(
+      (
+        await request(app)
+          .post("/api/demo/diagnoses/stream")
+          .send(body)
+          .expect(200)
+      ).text,
+    );
+
+    expect(first[0].traceId).not.toBe(second[0].traceId);
+    expect(first.map((event) => event.type)).toEqual(second.map((event) => event.type));
+    expect(first.at(-1)?.type).toBe("trace.completed");
+    expect(second.at(-1)?.type).toBe("trace.completed");
   });
 });

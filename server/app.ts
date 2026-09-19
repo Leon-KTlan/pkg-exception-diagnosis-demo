@@ -1,6 +1,8 @@
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { successFixture } from "./demo/fixtures/success.js";
+import { replayDemo } from "./demo/replay.js";
 import { DeepSeekGateway, type ModelGateway } from "./model.js";
 import { runDiagnosis } from "./orchestrator.js";
 import { validateDiagnosisRequest } from "./request-validation.js";
@@ -15,6 +17,7 @@ export interface AppDependencies {
   createModel?: () => ModelGateway;
   tools?: ToolRegistry;
   minimumStepMs?: number;
+  demoDelayScale?: number;
 }
 
 const modelFromEnvironment = () => {
@@ -76,6 +79,47 @@ export const createApp = (dependencies: AppDependencies = {}) => {
     });
 
     finishSseResponse(response);
+  });
+
+  app.post("/api/demo/diagnoses/stream", async (request, response) => {
+    const validation = validateDiagnosisRequest(request.body);
+    if (!validation.ok) {
+      response.status(400).json({ error: validation.error });
+      return;
+    }
+    const { question, packageId } = validation.value;
+    if (packageId !== successFixture.packageId) {
+      response.status(404).json({ error: "演示场景暂未实现" });
+      return;
+    }
+
+    prepareSseResponse(response);
+    const replayController = new AbortController();
+    const abortReplay = () => {
+      if (!response.writableEnded) {
+        replayController.abort();
+      }
+    };
+    const handleResponseClose = () => abortReplay();
+    request.on("aborted", abortReplay);
+    response.on("close", handleResponseClose);
+
+    try {
+      await replayDemo({
+        fixture: successFixture,
+        question,
+        packageId,
+        signal: replayController.signal,
+        delayScale: dependencies.demoDelayScale,
+        emit: createSseSender(response),
+      });
+    } finally {
+      request.off("aborted", abortReplay);
+      response.off("close", handleResponseClose);
+      if (!response.destroyed) {
+        finishSseResponse(response);
+      }
+    }
   });
 
   if (process.env.NODE_ENV === "production") {
