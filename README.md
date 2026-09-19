@@ -102,8 +102,10 @@ stateDiagram-v2
     RETRYING --> RUNNING: 自动重试一次
     RETRYING --> ERROR: 第二次仍失败
     ERROR --> BLOCKED: 阻断依赖步骤
+    RUNNING --> CANCELLED: 用户主动取消
     SUCCESS --> [*]
     BLOCKED --> [*]
+    CANCELLED --> [*]
 ```
 
 七个稳定业务步骤：
@@ -132,9 +134,19 @@ step.retrying
 step.failed
 trace.completed
 trace.failed
+trace.cancelled
 ```
 
 每条事件包含 `traceId`、单调递增的 `sequence`、`timestamp`、`stepId`、`type` 和 `payload`。`trace.started` 还会标记 `mode` 与 `simulated`，用于区分 Demo 和 Live 的数据来源。客户端按 `sequence` 幂等地更新状态，并结合 generation/traceId 防止旧运行污染当前 Trace。
+
+## 可靠性与取消
+
+- 运行中显示“取消诊断”。用户取消会立即 abort 当前 Fetch、失效 run generation，并将未完成步骤收敛为 `CANCELLED`；已收到的 Trace 保留。
+- SSE 在没有收到 `trace.completed`、`trace.failed` 或 `trace.cancelled` 时提前 EOF，会被识别为异常断流，不会继续停留在 `RUNNING`。
+- 客户端连续 30 秒没有领域事件，或整体运行超过 120 秒，会 abort 请求并以明确原因结束。
+- Live 服务端对单次模型调用、单次工具调用和整体诊断分别设置 25 秒、10 秒和 110 秒 deadline，并尽量将客户端断开传播到编排器、模型和工具。
+- 每次诊断最终只能是 `COMPLETED`、`FAILED` 或 `CANCELLED`。客户端断流、客户端 timeout、模型 timeout、工具 timeout 和整体 deadline 都进入 `FAILED`，并记录结构化终止原因。
+- 不使用 SSE heartbeat、独立取消 endpoint、断线续传或自动重试整个诊断。
 
 ## 安全与真实性
 

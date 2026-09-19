@@ -5,6 +5,18 @@ import type {
   ReceiptRecord,
   WarehouseTool,
 } from "./tools.js";
+import { createChildAbortController, raceWithAbort } from "./abort.js";
+
+export const MODEL_TIMEOUT_MS = 25_000;
+
+export class ModelTimeoutError extends Error {
+  readonly code = "MODEL_TIMEOUT";
+
+  constructor() {
+    super("模型请求超时");
+    this.name = "ModelTimeoutError";
+  }
+}
 
 export interface IntentResult {
   packageId: string;
@@ -36,13 +48,22 @@ export interface SelectedTool {
 export interface ModelGateway {
   readonly modelName: string;
   readonly tokenUsage: number;
-  identify(question: string, expectedPackageId?: string): Promise<IntentResult>;
-  selectTool(context: AgentContext, eligibleTools: WarehouseTool[]): Promise<SelectedTool>;
-  detectAnomaly(context: AgentContext): Promise<AnomalyResult>;
+  identify(
+    question: string,
+    expectedPackageId?: string,
+    signal?: AbortSignal,
+  ): Promise<IntentResult>;
+  selectTool(
+    context: AgentContext,
+    eligibleTools: WarehouseTool[],
+    signal?: AbortSignal,
+  ): Promise<SelectedTool>;
+  detectAnomaly(context: AgentContext, signal?: AbortSignal): Promise<AnomalyResult>;
   composeDiagnosis(
     context: AgentContext,
     evidence: Evidence[],
     validationError?: string,
+    signal?: AbortSignal,
   ): Promise<Diagnosis>;
 }
 
@@ -109,38 +130,53 @@ export class DeepSeekGateway implements ModelGateway {
     return this.consumedTokens;
   }
 
-  private async complete(body: Record<string, unknown>) {
-    const response = await fetch(
-      `${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.config.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.config.model,
-          temperature: 0,
-          thinking: { type: "disabled" },
-          ...body,
-        }),
-      },
+  private async complete(body: Record<string, unknown>, parentSignal?: AbortSignal) {
+    const timeout = createChildAbortController(
+      parentSignal,
+      MODEL_TIMEOUT_MS,
+      new ModelTimeoutError(),
     );
+    try {
+      const response = await raceWithAbort(
+        fetch(`${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.config.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            temperature: 0,
+            thinking: { type: "disabled" },
+            ...body,
+          }),
+          signal: timeout.signal,
+        }),
+        timeout.signal,
+      );
 
-    const result = (await response.json()) as ChatCompletionResponse;
-    if (!response.ok) {
-      throw new Error(result.error?.message ?? `DeepSeek 请求失败 (${response.status})`);
-    }
+      const result = (await raceWithAbort(response.json(), timeout.signal)) as ChatCompletionResponse;
+      if (!response.ok) {
+        throw new Error(result.error?.message ?? `DeepSeek 请求失败 (${response.status})`);
+      }
 
-    this.consumedTokens += result.usage?.total_tokens ?? 0;
-    const message = result.choices?.[0]?.message;
-    if (!message) {
-      throw new Error("DeepSeek 未返回有效消息");
+      this.consumedTokens += result.usage?.total_tokens ?? 0;
+      const message = result.choices?.[0]?.message;
+      if (!message) {
+        throw new Error("DeepSeek 未返回有效消息");
+      }
+      return message;
+    } catch (error) {
+      if (timeout.didTimeout()) {
+        throw new ModelTimeoutError();
+      }
+      throw error;
+    } finally {
+      timeout.cleanup();
     }
-    return message;
   }
 
-  async identify(question: string, expectedPackageId?: string) {
+  async identify(question: string, expectedPackageId?: string, signal?: AbortSignal) {
     const packageIdInstruction = expectedPackageId
       ? `服务端已从用户问题中确定唯一包裹号为 ${expectedPackageId}。packageId 必须输出该值；normalizedQuestion 必须原样保留该包裹号，包括连字符和大小写，只规范化其他问题文字。`
       : "必须原样保留用户问题中的包裹号，包括连字符和大小写。";
@@ -155,11 +191,15 @@ export class DeepSeekGateway implements ModelGateway {
     const message = await this.complete({
       messages,
       response_format: { type: "json_object" },
-    });
+    }, signal);
     return parseJson<IntentResult>(message.content, "意图识别");
   }
 
-  async selectTool(context: AgentContext, eligibleTools: WarehouseTool[]) {
+  async selectTool(
+    context: AgentContext,
+    eligibleTools: WarehouseTool[],
+    signal?: AbortSignal,
+  ) {
     const contextSnapshot = JSON.stringify(context, null, 2);
     const message = await this.complete({
       messages: [
@@ -182,7 +222,7 @@ export class DeepSeekGateway implements ModelGateway {
         },
       })),
       tool_choice: "required",
-    });
+    }, signal);
 
     const call = message.tool_calls?.[0]?.function;
     if (!call?.name) {
@@ -195,7 +235,7 @@ export class DeepSeekGateway implements ModelGateway {
     };
   }
 
-  async detectAnomaly(context: AgentContext) {
+  async detectAnomaly(context: AgentContext, signal?: AbortSignal) {
     const message = await this.complete({
       messages: [
         {
@@ -209,7 +249,7 @@ export class DeepSeekGateway implements ModelGateway {
         },
       ],
       response_format: { type: "json_object" },
-    });
+    }, signal);
     return parseJson<AnomalyResult>(message.content, "异常分析");
   }
 
@@ -217,6 +257,7 @@ export class DeepSeekGateway implements ModelGateway {
     context: AgentContext,
     evidence: Evidence[],
     validationError?: string,
+    signal?: AbortSignal,
   ) {
     const message = await this.complete({
       messages: [
@@ -239,7 +280,7 @@ export class DeepSeekGateway implements ModelGateway {
         },
       ],
       response_format: { type: "json_object" },
-    });
+    }, signal);
     return parseJson<Diagnosis>(message.content, "最终诊断");
   }
 }

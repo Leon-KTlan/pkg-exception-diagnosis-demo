@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { STEP_DEFINITIONS, type Diagnosis, type StepView } from "../shared/protocol";
-import { DiagnosisPanel, StepInspector, StepTimeline, TraceMeta } from "./components";
+import { DiagnosisPanel, RunError, StepInspector, StepTimeline, TraceMeta } from "./components";
 import { createInitialTraceState } from "./state";
 
 describe("diagnosis presentation", () => {
@@ -104,5 +104,25 @@ describe("diagnosis presentation", () => {
     expect(markup).toContain("PKG-20260918");
     expect(markup).toContain("WAREHOUSE_INBOUND_DIAGNOSIS");
     expect(markup).toContain("查询包裹 PKG-20260918 尚未完成入库的原因");
+  });
+
+  it("uses explicit cancellation wording for a cancelled step and trace", () => {
+    const cancelled = {
+      ...STEP_DEFINITIONS[0],
+      status: "CANCELLED" as const,
+    };
+    const timeline = renderToStaticMarkup(
+      createElement(StepTimeline, {
+        steps: [cancelled],
+        selectedStepId: "identify",
+        onSelect: vi.fn(),
+      }),
+    );
+    const error = renderToStaticMarkup(
+      createElement(RunError, { title: "诊断已取消", message: "已取消诊断" }),
+    );
+
+    expect(timeline).toContain("已取消");
+    expect(error).toContain("诊断已取消");
   });
 });

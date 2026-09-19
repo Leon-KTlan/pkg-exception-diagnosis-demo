@@ -6,11 +6,11 @@ import {
   CornerDownRight,
   Play,
   Radio,
-  RotateCcw,
   Search,
+  Square,
   Warehouse,
 } from "lucide-react";
-import { streamDiagnosis } from "./api";
+import { StreamDiagnosisError, streamDiagnosis, toTraceFailureReason } from "./api";
 import {
   DiagnosisPanel,
   EvidenceChain,
@@ -40,6 +40,7 @@ function App() {
   const [selectedStepId, setSelectedStepId] = useState<StepId | null>(null);
   const [formError, setFormError] = useState<string>();
   const abortController = useRef<AbortController | undefined>(undefined);
+  const runStartedAt = useRef<number | undefined>(undefined);
   const runGeneration = useRef(createRunGeneration());
 
   const running = state.status === "RUNNING";
@@ -53,6 +54,7 @@ function App() {
 
   useEffect(
     () => () => {
+      runGeneration.current.next();
       abortController.current?.abort();
     },
     [],
@@ -70,9 +72,12 @@ function App() {
     setQuestion(trimmedQuestion);
     setFormError(undefined);
     setSelectedStepId(null);
-    dispatch({ type: "reset" });
+    dispatch({ type: "begin", mode, question: trimmedQuestion });
     const controller = new AbortController();
     abortController.current = controller;
+    const startedAt = performance.now();
+    runStartedAt.current = startedAt;
+    let receivedTraceStarted = false;
 
     try {
       await streamDiagnosis({
@@ -81,17 +86,55 @@ function App() {
         signal: controller.signal,
         onEvent: (event) => {
           if (!runGeneration.current.isCurrent(generation)) return;
+          if (event.type === "trace.started") receivedTraceStarted = true;
           dispatch({ type: "event", event });
         },
       });
     } catch (error) {
+      if (!runGeneration.current.isCurrent(generation)) return;
       if (controller.signal.aborted) return;
-      setFormError(error instanceof Error ? error.message : "无法连接诊断服务");
+      const message = error instanceof Error ? error.message : "无法连接诊断服务";
+      if (!receivedTraceStarted) {
+        dispatch({ type: "reset" });
+        setFormError(message);
+      } else {
+        const reason =
+          error instanceof StreamDiagnosisError
+            ? toTraceFailureReason(error)
+            : "SERVER_ERROR";
+        dispatch({
+          type: "terminate",
+          status: "FAILED",
+          error: message,
+          terminationReason: reason,
+          totalDurationMs: Math.round(performance.now() - startedAt),
+        });
+      }
     } finally {
       if (abortController.current === controller) {
         abortController.current = undefined;
+        runStartedAt.current = undefined;
       }
     }
+  };
+
+  const cancelDiagnosis = () => {
+    if (!running) return;
+    runGeneration.current.next();
+    const controller = abortController.current;
+    const totalDurationMs = runStartedAt.current
+      ? Math.round(performance.now() - runStartedAt.current)
+      : undefined;
+    abortController.current = undefined;
+    runStartedAt.current = undefined;
+    controller?.abort();
+    dispatch({
+      type: "terminate",
+      status: "CANCELLED",
+      error: "已取消诊断，当前已收到的 Trace 已保留。",
+      terminationReason: "USER_CANCELLED",
+      totalDurationMs,
+    });
   };
 
   const switchMode = (nextMode: TraceMode) => {
@@ -99,6 +142,7 @@ function App() {
     runGeneration.current.next();
     abortController.current?.abort();
     abortController.current = undefined;
+    runStartedAt.current = undefined;
     dispatch({ type: "reset" });
     setSelectedStepId(null);
     setFormError(undefined);
@@ -174,15 +218,17 @@ function App() {
               spellCheck={false}
             />
           </div>
-          <button
-            className="run-button"
-            type="button"
-            onClick={() => void startDiagnosis()}
-            disabled={running}
-          >
-            {running ? <RotateCcw size={17} className="animate-spin" /> : <Play size={17} fill="currentColor" />}
-            {running ? "诊断进行中" : state.status === "IDLE" ? "开始诊断" : "重新诊断"}
-          </button>
+          {running ? (
+            <button className="run-button cancel-button" type="button" onClick={cancelDiagnosis}>
+              <Square size={16} fill="currentColor" />
+              取消诊断
+            </button>
+          ) : (
+            <button className="run-button" type="button" onClick={() => void startDiagnosis()}>
+              <Play size={17} fill="currentColor" />
+              {state.status === "IDLE" ? "开始诊断" : "重新诊断"}
+            </button>
+          )}
           <div className="query-examples">
             <span>测试场景</span>
             {SCENARIO_QUESTIONS.map(({ question: scenarioQuestion, label }) => (
@@ -228,7 +274,12 @@ function App() {
         {state.diagnosis && (
           <DiagnosisPanel diagnosis={state.diagnosis} evidence={state.evidence} />
         )}
-        {state.status === "FAILED" && state.error && <RunError message={state.error} />}
+        {(state.status === "FAILED" || state.status === "CANCELLED") && state.error && (
+          <RunError
+            message={state.error}
+            title={state.status === "CANCELLED" ? "诊断已取消" : undefined}
+          />
+        )}
       </main>
 
       <footer>

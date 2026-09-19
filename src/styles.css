@@ -329,8 +329,8 @@ footer {
 }
 
 .query-input-wrap input {
-  min-width: 190px;
-  width: 230px;
+  min-width: 0;
+  width: 100%;
   padding: 22px 0;
   color: var(--ink);
   background: transparent;
@@ -364,6 +364,14 @@ footer {
 
 .run-button:hover:not(:disabled) {
   background: var(--blue);
+}
+
+.cancel-button {
+  background: var(--red);
+}
+
+.cancel-button:hover:not(:disabled) {
+  background: #8f342f;
 }
 
 .run-button:disabled {
@@ -612,6 +620,12 @@ footer {
   background: var(--slate-soft);
 }
 
+.step-cancelled {
+  color: var(--muted);
+  border-style: dashed;
+  background: var(--slate-soft);
+}
+
 .step-copy {
   min-width: 0;
   display: grid;
@@ -708,6 +722,12 @@ footer {
   color: var(--red);
   border-color: #e1b9b5;
   background: var(--red-soft);
+}
+
+.status-cancelled {
+  color: var(--muted);
+  border-color: #c9c7bf;
+  background: var(--slate-soft);
 }
 
 .status-blocked {
@@ -1318,7 +1338,7 @@ footer {
 
   .query-input-wrap input {
     min-width: 0;
-    width: 55%;
+    width: 100%;
     font-size: 13px;
   }
 

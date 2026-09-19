@@ -15,9 +15,26 @@ export type StepStatus =
   | "SUCCESS"
   | "ERROR"
   | "RETRYING"
-  | "BLOCKED";
+  | "BLOCKED"
+  | "CANCELLED";
 
-export type TraceStatus = "IDLE" | "RUNNING" | "COMPLETED" | "FAILED";
+export type TraceStatus =
+  | "IDLE"
+  | "RUNNING"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELLED";
+
+export type TerminationReason =
+  | "USER_CANCELLED"
+  | "STREAM_DISCONNECTED"
+  | "CLIENT_INACTIVITY_TIMEOUT"
+  | "CLIENT_OVERALL_TIMEOUT"
+  | "MODEL_TIMEOUT"
+  | "TOOL_TIMEOUT"
+  | "DIAGNOSIS_TIMEOUT"
+  | "SERVER_DISCONNECTED"
+  | "SERVER_ERROR";
 
 export type TraceMode = "live" | "demo";
 
@@ -76,7 +93,8 @@ export type TraceEventType =
   | "step.retrying"
   | "step.failed"
   | "trace.completed"
-  | "trace.failed";
+  | "trace.failed"
+  | "trace.cancelled";
 
 export interface TraceEvent<T = Record<string, unknown>> {
   traceId: string;
@@ -118,6 +136,14 @@ export interface TraceFailedPayload {
   error: string;
   totalDurationMs: number;
   toolCallCount: number;
+  terminationReason: Exclude<TerminationReason, "USER_CANCELLED">;
+}
+
+export interface TraceCancelledPayload {
+  error: string;
+  totalDurationMs: number;
+  toolCallCount: number;
+  terminationReason: "USER_CANCELLED";
 }
 
 export const STEP_DEFINITIONS: StepDefinition[] = [

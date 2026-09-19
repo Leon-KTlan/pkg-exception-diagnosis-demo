@@ -30,6 +30,7 @@ export interface PutawayTaskRecord {
 
 export interface ToolContext {
   traceId: string;
+  signal?: AbortSignal;
 }
 
 export interface WarehouseTool<TArgs = Record<string, unknown>, TResult = unknown> {
@@ -103,9 +104,6 @@ const putawayTaskRecords: Record<string, PutawayTaskRecord> = {
   },
 };
 
-const wait = (milliseconds: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
-
 export const createWarehouseTools = (): ToolRegistry => ({
   get_package: {
     name: "get_package",
@@ -121,8 +119,8 @@ export const createWarehouseTools = (): ToolRegistry => ({
       required: ["packageId"],
       additionalProperties: false,
     },
-    execute: async (args: Record<string, unknown>) => {
-      await wait(180);
+    execute: async (args: Record<string, unknown>, context) => {
+      await abortableDelay(180, context.signal);
       const packageId = String(args.packageId ?? "");
       return packageRecords[packageId] ?? null;
     },
@@ -141,8 +139,8 @@ export const createWarehouseTools = (): ToolRegistry => ({
       required: ["receiptId"],
       additionalProperties: false,
     },
-    execute: async (args: Record<string, unknown>) => {
-      await wait(210);
+    execute: async (args: Record<string, unknown>, context) => {
+      await abortableDelay(210, context.signal);
       const receiptId = String(args.receiptId ?? "");
       return receiptRecords[receiptId] ?? null;
     },
@@ -161,8 +159,8 @@ export const createWarehouseTools = (): ToolRegistry => ({
       required: ["taskId"],
       additionalProperties: false,
     },
-    execute: async (args: Record<string, unknown>) => {
-      await wait(260);
+    execute: async (args: Record<string, unknown>, context) => {
+      await abortableDelay(260, context.signal);
       const taskId = String(args.taskId ?? "");
       if (taskId === "PUT-TIMEOUT-001") {
         throw new ToolTimeoutError("get_putaway_task");
@@ -171,3 +169,4 @@ export const createWarehouseTools = (): ToolRegistry => ({
     },
   },
 });
+import { abortableDelay } from "./abort.js";
