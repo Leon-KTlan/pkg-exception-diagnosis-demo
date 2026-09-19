@@ -5,8 +5,10 @@ import type {
   Evidence,
   TraceCompletedPayload,
   TraceEvent,
+  TraceFailedPayload,
 } from "../shared/protocol.js";
 import { createApp } from "./app.js";
+import { getDemoFixture } from "./demo/fixtures/index.js";
 import type {
   AgentContext,
   AnomalyResult,
@@ -352,6 +354,13 @@ describe("POST /api/diagnoses/stream", () => {
 });
 
 describe("POST /api/demo/diagnoses/stream", () => {
+  it("maps each supported package to its deterministic fixture", () => {
+    expect(getDemoFixture("PKG-20260918")?.packageId).toBe("PKG-20260918");
+    expect(getDemoFixture("PKG-404")?.packageId).toBe("PKG-404");
+    expect(getDemoFixture("PKG-TIMEOUT")?.packageId).toBe("PKG-TIMEOUT");
+    expect(getDemoFixture("PKG-12345")).toBeUndefined();
+  });
+
   it("replays the success diagnosis without invoking Live dependencies", async () => {
     const { app, model, modelFactoryCalls } = createTestApp();
     const question = "请查看（pkg-20260918），为什么还没入库？";
@@ -423,5 +432,95 @@ describe("POST /api/demo/diagnoses/stream", () => {
     expect(first.map((event) => event.type)).toEqual(second.map((event) => event.type));
     expect(first.at(-1)?.type).toBe("trace.completed");
     expect(second.at(-1)?.type).toBe("trace.completed");
+  });
+
+  it("replays PKG-404 as insufficient evidence without invoking Live dependencies", async () => {
+    const { app, model, modelFactoryCalls } = createTestApp();
+    const question = "帮我看看包裹 PKG-404 为什么还没入库";
+    const response = await request(app)
+      .post("/api/demo/diagnoses/stream")
+      .send({ question })
+      .expect(200)
+      .expect("Content-Type", /text\/event-stream/);
+
+    const events = parseEvents(response.text);
+    const started = events.find((event) => event.type === "trace.started");
+    const completed = events.at(-1);
+    const completedPayload = completed?.payload as unknown as TraceCompletedPayload;
+
+    expect(started?.payload).toMatchObject({
+      mode: "demo",
+      simulated: true,
+      question,
+      model: "固定回放",
+    });
+    expect(completed?.type).toBe("trace.completed");
+    expect(completedPayload.diagnosis.status).toBe("INSUFFICIENT_EVIDENCE");
+    expect(completedPayload.evidence).toEqual([]);
+    expect(completedPayload.diagnosis.evidenceIds).toEqual([]);
+    expect(completedPayload.toolCallCount).toBe(1);
+    expect(completedPayload.tokenUsage).toBeUndefined();
+    expect(events.filter((event) => event.type === "tool.call.started")).toHaveLength(1);
+    expect(
+      events
+        .filter((event) => event.type === "step.completed")
+        .filter((event) => ["receipt", "putaway", "anomaly", "evidence"].includes(event.stepId ?? ""))
+        .every((event) => event.payload.status === "BLOCKED"),
+    ).toBe(true);
+    expect(modelFactoryCalls.count).toBe(0);
+    expect(model.identifyCalls).toBe(0);
+    expect(model.toolSelectionCalls).toBe(0);
+  });
+
+  it("replays PKG-TIMEOUT through retry and trace.failed without invoking Live dependencies", async () => {
+    const { app, model, modelFactoryCalls } = createTestApp();
+    const response = await request(app)
+      .post("/api/demo/diagnoses/stream")
+      .send({ question: "帮我看看包裹 PKG-TIMEOUT 为什么还没入库" })
+      .expect(200)
+      .expect("Content-Type", /text\/event-stream/);
+
+    const events = parseEvents(response.text);
+    const failed = events.at(-1);
+    const failedPayload = failed?.payload as unknown as TraceFailedPayload;
+
+    expect(failed?.type).toBe("trace.failed");
+    expect(failedPayload.error).toBe("get_putaway_task 查询超时");
+    expect(failedPayload.toolCallCount).toBe(4);
+    expect(events.filter((event) => event.type === "step.retrying")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "tool.call.started")).toHaveLength(4);
+    expect(events.filter((event) => event.type === "tool.call.completed")).toHaveLength(2);
+    expect(
+      events.find((event) => event.type === "step.failed" && event.stepId === "putaway")?.payload,
+    ).toMatchObject({ status: "ERROR", error: "get_putaway_task 查询超时" });
+    expect(
+      events
+        .filter((event) => event.type === "step.completed")
+        .filter((event) => ["anomaly", "evidence", "diagnosis"].includes(event.stepId ?? ""))
+        .every((event) => event.payload.status === "BLOCKED"),
+    ).toBe(true);
+    expect(events.find((event) => event.type === "trace.started")?.payload).toMatchObject({
+      mode: "demo",
+      simulated: true,
+    });
+    expect(JSON.stringify(events)).not.toContain("tokenUsage");
+    expect(modelFactoryCalls.count).toBe(0);
+    expect(model.identifyCalls).toBe(0);
+    expect(model.toolSelectionCalls).toBe(0);
+  });
+
+  it("rejects a valid but unsupported package before opening SSE", async () => {
+    const { app, model, modelFactoryCalls } = createTestApp();
+    const response = await request(app)
+      .post("/api/demo/diagnoses/stream")
+      .send({ question: "帮我看看包裹 PKG-12345 为什么还没入库" })
+      .expect(400)
+      .expect("Content-Type", /json/);
+
+    expect(response.body).toEqual({ error: "该包裹号暂不支持演示模式" });
+    expect(response.text).not.toContain("trace.started");
+    expect(modelFactoryCalls.count).toBe(0);
+    expect(model.identifyCalls).toBe(0);
+    expect(model.toolSelectionCalls).toBe(0);
   });
 });

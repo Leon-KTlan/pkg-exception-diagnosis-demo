@@ -1,7 +1,7 @@
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { successFixture } from "./demo/fixtures/success.js";
+import { getDemoFixture } from "./demo/fixtures/index.js";
 import { replayDemo } from "./demo/replay.js";
 import { DeepSeekGateway, type ModelGateway } from "./model.js";
 import { runDiagnosis } from "./orchestrator.js";
@@ -88,8 +88,9 @@ export const createApp = (dependencies: AppDependencies = {}) => {
       return;
     }
     const { question, packageId } = validation.value;
-    if (packageId !== successFixture.packageId) {
-      response.status(404).json({ error: "演示场景暂未实现" });
+    const fixture = getDemoFixture(packageId);
+    if (!fixture) {
+      response.status(400).json({ error: "该包裹号暂不支持演示模式" });
       return;
     }
 
@@ -106,7 +107,7 @@ export const createApp = (dependencies: AppDependencies = {}) => {
 
     try {
       await replayDemo({
-        fixture: successFixture,
+        fixture,
         question,
         packageId,
         signal: replayController.signal,
