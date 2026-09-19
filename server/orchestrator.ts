@@ -14,6 +14,14 @@ import {
 import { buildEvidence, validateDiagnosis } from "./evidence.js";
 import type { AgentContext, ModelGateway } from "./model.js";
 import {
+  ClientDisconnectedError,
+  DiagnosisTimeoutError,
+  abortableDelay,
+  createChildAbortController,
+  getAbortReason,
+  raceWithAbort,
+} from "./abort.js";
+import {
   ToolTimeoutError,
   type PackageRecord,
   type PutawayTaskRecord,
@@ -30,13 +38,32 @@ export interface RunDiagnosisOptions {
   emit: (event: TraceEvent) => void | Promise<void>;
   minimumStepMs?: number;
   traceId?: string;
+  signal?: AbortSignal;
+  diagnosisTimeoutMs?: number;
+  toolTimeoutMs?: number;
 }
 
-const delay = (milliseconds: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+export const TOOL_TIMEOUT_MS = 10_000;
+export const DIAGNOSIS_TIMEOUT_MS = 110_000;
 
 const toErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : "发生未知错误";
+
+const toTerminationReason = (error: unknown) => {
+  const code = error instanceof Error ? (error as Error & { code?: string }).code : undefined;
+  switch (code) {
+    case "MODEL_TIMEOUT":
+      return "MODEL_TIMEOUT" as const;
+    case "TOOL_TIMEOUT":
+      return "TOOL_TIMEOUT" as const;
+    case "DIAGNOSIS_TIMEOUT":
+      return "DIAGNOSIS_TIMEOUT" as const;
+    case "CLIENT_DISCONNECTED":
+      return "SERVER_DISCONNECTED" as const;
+    default:
+      return "SERVER_ERROR" as const;
+  }
+};
 
 export const runDiagnosis = async ({
   question,
@@ -46,7 +73,16 @@ export const runDiagnosis = async ({
   emit: outputEvent,
   minimumStepMs = 400,
   traceId = `tr_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+  signal,
+  diagnosisTimeoutMs = DIAGNOSIS_TIMEOUT_MS,
+  toolTimeoutMs = TOOL_TIMEOUT_MS,
 }: RunDiagnosisOptions) => {
+  const diagnosisDeadline = createChildAbortController(
+    signal,
+    diagnosisTimeoutMs,
+    new DiagnosisTimeoutError(),
+  );
+  const executionSignal = diagnosisDeadline.signal;
   const traceStartedAt = performance.now();
   let sequence = 0;
   let toolCallCount = 0;
@@ -57,6 +93,9 @@ export const runDiagnosis = async ({
     payload: T,
     stepId?: StepId,
   ) => {
+    if (signal?.aborted) {
+      throw getAbortReason(signal);
+    }
     sequence += 1;
     await outputEvent({
       traceId,
@@ -71,7 +110,7 @@ export const runDiagnosis = async ({
   const waitForMinimumDisplay = async (startedAt: number) => {
     const remaining = minimumStepMs - (performance.now() - startedAt);
     if (remaining > 0) {
-      await delay(remaining);
+      await abortableDelay(remaining, executionSignal);
     }
   };
 
@@ -109,12 +148,15 @@ export const runDiagnosis = async ({
   const runAgentStep = async <T>(
     stepId: StepId,
     input: unknown,
-    operation: () => Promise<T> | T,
+    operation: (signal: AbortSignal) => Promise<T> | T,
   ) => {
     const startedAt = performance.now();
     await startStep(stepId, input);
     try {
-      const result = await operation();
+      const result = await raceWithAbort(
+        Promise.resolve().then(() => operation(executionSignal)),
+        executionSignal,
+      );
       await completeStep(stepId, startedAt, result);
       return result;
     } catch (error) {
@@ -149,7 +191,7 @@ export const runDiagnosis = async ({
     }
 
     try {
-      const selection = await model.selectTool(context, [tool]);
+      const selection = await model.selectTool(context, [tool], executionSignal);
       if (selection.name !== expectedToolName) {
         throw new Error(`Agent 选择了不允许的工具 ${selection.name}`);
       }
@@ -173,7 +215,28 @@ export const runDiagnosis = async ({
           stepId,
         );
         try {
-          const result = await tool.execute(selection.arguments, { traceId });
+          const toolDeadline = createChildAbortController(
+            executionSignal,
+            toolTimeoutMs,
+            new ToolTimeoutError(selection.name),
+          );
+          let result: T;
+          try {
+            result = await raceWithAbort(
+              tool.execute(selection.arguments, {
+                traceId,
+                signal: toolDeadline.signal,
+              }),
+              toolDeadline.signal,
+            );
+          } catch (toolError) {
+            if (toolDeadline.didTimeout()) {
+              throw new ToolTimeoutError(selection.name);
+            }
+            throw toolError;
+          } finally {
+            toolDeadline.cleanup();
+          }
           const toolDurationMs = Math.round(performance.now() - toolStartedAt);
           await emit<StepPayload>(
             "tool.call.completed",
@@ -238,6 +301,7 @@ export const runDiagnosis = async ({
   const composeDiagnosis = async (
     context: AgentContext,
     evidence: Evidence[],
+    signal: AbortSignal,
   ): Promise<Diagnosis> => {
     let validationError: string | undefined;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -245,6 +309,7 @@ export const runDiagnosis = async ({
         context,
         evidence,
         validationError,
+        signal,
       );
       validationError = validateDiagnosis(diagnosis, evidence) ?? undefined;
       if (!validationError) {
@@ -265,22 +330,26 @@ export const runDiagnosis = async ({
     throw new Error(`最终诊断校验失败：${validationError}`);
   };
 
-  await emit<TraceStartedPayload>("trace.started", {
-    mode: "live",
-    simulated: false,
-    question,
-    model: model.modelName,
-    steps: STEP_DEFINITIONS,
-  });
-
   const context: AgentContext = {
     question,
     packageId,
   };
 
   try {
-    await runAgentStep("identify", { question }, async () => {
-      const intent = await model.identify(question, packageId);
+    if (signal?.aborted) {
+      return { traceId, cancelled: true };
+    }
+
+    await emit<TraceStartedPayload>("trace.started", {
+      mode: "live",
+      simulated: false,
+      question,
+      model: model.modelName,
+      steps: STEP_DEFINITIONS,
+    });
+
+    await runAgentStep("identify", { question }, async (stepSignal) => {
+      const intent = await model.identify(question, packageId, stepSignal);
       if (
         !intent ||
         typeof intent.packageId !== "string" ||
@@ -314,7 +383,7 @@ export const runDiagnosis = async ({
       const diagnosis = await runAgentStep(
         "diagnosis",
         { packageId: context.packageId, evidenceIds: [] },
-        () => composeDiagnosis(context, []),
+        (stepSignal) => composeDiagnosis(context, [], stepSignal),
       );
       const payload: TraceCompletedPayload = {
         diagnosis,
@@ -343,7 +412,7 @@ export const runDiagnosis = async ({
       const diagnosis = await runAgentStep(
         "diagnosis",
         { packageId: context.packageId, evidenceIds: evidence.map((item) => item.evidenceId) },
-        () => composeDiagnosis(context, evidence),
+        (stepSignal) => composeDiagnosis(context, evidence, stepSignal),
       );
       await emit<TraceCompletedPayload>(
         "trace.completed",
@@ -373,7 +442,7 @@ export const runDiagnosis = async ({
         receipt: context.receiptRecord,
         putawayTask: context.putawayTaskRecord,
       },
-      () => model.detectAnomaly(context),
+      (stepSignal) => model.detectAnomaly(context, stepSignal),
     );
 
     const evidence = await runAgentStep(
@@ -390,7 +459,7 @@ export const runDiagnosis = async ({
         packageId: context.packageId,
         evidenceIds: evidence.map((item) => item.evidenceId),
       },
-      () => composeDiagnosis(context, evidence),
+      (stepSignal) => composeDiagnosis(context, evidence, stepSignal),
     );
 
     await emit<TraceCompletedPayload>(
@@ -406,6 +475,12 @@ export const runDiagnosis = async ({
     );
     return { traceId, diagnosis, evidence };
   } catch (error) {
+    if (signal?.aborted || error instanceof ClientDisconnectedError) {
+      return { traceId, cancelled: true };
+    }
+    const terminalError = diagnosisDeadline.didTimeout()
+      ? new DiagnosisTimeoutError()
+      : error;
     const followingSteps = STEP_DEFINITIONS.slice(currentStepIndex + 1)
       .map((step) => step.id)
       .filter((stepId) => stepId !== "diagnosis");
@@ -418,10 +493,13 @@ export const runDiagnosis = async ({
       );
     }
     await emit<TraceFailedPayload>("trace.failed", {
-      error: toErrorMessage(error),
+      error: toErrorMessage(terminalError),
       totalDurationMs: Math.round(performance.now() - traceStartedAt),
       toolCallCount,
+      terminationReason: toTerminationReason(terminalError),
     });
-    return { traceId, error: toErrorMessage(error) };
+    return { traceId, error: toErrorMessage(terminalError) };
+  } finally {
+    diagnosisDeadline.cleanup();
   }
 };

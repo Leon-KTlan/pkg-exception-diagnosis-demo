@@ -7,6 +7,7 @@ import { DeepSeekGateway, type ModelGateway } from "./model.js";
 import { runDiagnosis } from "./orchestrator.js";
 import { validateDiagnosisRequest } from "./request-validation.js";
 import {
+  createDisconnectController,
   createSseSender,
   finishSseResponse,
   prepareSseResponse,
@@ -67,18 +68,23 @@ export const createApp = (dependencies: AppDependencies = {}) => {
     }
 
     prepareSseResponse(response);
-    const send = createSseSender(response);
-
-    await runDiagnosis({
-      question,
-      packageId,
-      model,
-      tools: dependencies.tools ?? createWarehouseTools(),
-      emit: send,
-      minimumStepMs: dependencies.minimumStepMs,
-    });
-
-    finishSseResponse(response);
+    const disconnect = createDisconnectController(request, response);
+    try {
+      await runDiagnosis({
+        question,
+        packageId,
+        model,
+        tools: dependencies.tools ?? createWarehouseTools(),
+        emit: createSseSender(response),
+        minimumStepMs: dependencies.minimumStepMs,
+        signal: disconnect.signal,
+      });
+    } finally {
+      disconnect.cleanup();
+      if (!response.destroyed) {
+        finishSseResponse(response);
+      }
+    }
   });
 
   app.post("/api/demo/diagnoses/stream", async (request, response) => {
@@ -95,28 +101,19 @@ export const createApp = (dependencies: AppDependencies = {}) => {
     }
 
     prepareSseResponse(response);
-    const replayController = new AbortController();
-    const abortReplay = () => {
-      if (!response.writableEnded) {
-        replayController.abort();
-      }
-    };
-    const handleResponseClose = () => abortReplay();
-    request.on("aborted", abortReplay);
-    response.on("close", handleResponseClose);
+    const disconnect = createDisconnectController(request, response);
 
     try {
       await replayDemo({
         fixture,
         question,
         packageId,
-        signal: replayController.signal,
+        signal: disconnect.signal,
         delayScale: dependencies.demoDelayScale,
         emit: createSseSender(response),
       });
     } finally {
-      request.off("aborted", abortReplay);
-      response.off("close", handleResponseClose);
+      disconnect.cleanup();
       if (!response.destroyed) {
         finishSseResponse(response);
       }

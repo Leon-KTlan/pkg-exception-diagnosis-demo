@@ -4,6 +4,7 @@ import type {
   TraceEvent,
   TraceEventType,
 } from "../../shared/protocol.js";
+import { raceWithAbort } from "../abort.js";
 
 export interface DemoReplayContext {
   question: string;
@@ -62,7 +63,14 @@ export const replayDemo = async ({
 
     const delayMs = Math.max(0, Math.round(fixtureEvent.delayMs * delayScale));
     if (delayMs > 0) {
-      await wait(delayMs);
+      try {
+        await raceWithAbort(wait(delayMs), signal);
+      } catch (error) {
+        if (signal?.aborted) {
+          return { traceId, emittedEvents: sequence };
+        }
+        throw error;
+      }
     }
     if (signal?.aborted) {
       return { traceId, emittedEvents: sequence };

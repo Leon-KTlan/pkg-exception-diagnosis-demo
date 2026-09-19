@@ -144,4 +144,71 @@ describe("traceReducer", () => {
     expect(late).toBe(reset);
     expect(late.traceId).toBeUndefined();
   });
+
+  it("converges an active run to CANCELLED and cancels incomplete steps", () => {
+    const started = traceReducer(createInitialTraceState(), {
+      type: "begin",
+      mode: "demo",
+      question: "包裹 PKG-20260918 为什么还没有入库？",
+    });
+    const running = traceReducer(started, {
+      type: "event",
+      event: event(
+        1,
+        "trace.started",
+        {
+          mode: "demo",
+          simulated: true,
+          question: "包裹 PKG-20260918 为什么还没有入库？",
+          model: "固定回放",
+          steps: STEP_DEFINITIONS,
+        },
+      ),
+    });
+    const active = traceReducer(running, {
+      type: "event",
+      event: event(2, "step.started", { status: "RUNNING" }, "package"),
+    });
+    const cancelled = traceReducer(active, {
+      type: "terminate",
+      status: "CANCELLED",
+      error: "已取消诊断",
+      terminationReason: "USER_CANCELLED",
+    });
+
+    expect(cancelled.status).toBe("CANCELLED");
+    expect(cancelled.steps.every((step) =>
+      ["SUCCESS", "ERROR", "BLOCKED", "CANCELLED"].includes(step.status),
+    )).toBe(true);
+    expect(cancelled.steps.find((step) => step.id === "package")?.status).toBe("CANCELLED");
+  });
+
+  it("rejects late events after a terminal failure", () => {
+    const started = traceReducer(createInitialTraceState(), {
+      type: "event",
+      event: event(1, "trace.started", {
+        mode: "live",
+        simulated: false,
+        question: "包裹 PKG-20260918 为什么还没有入库？",
+        model: "fake-deepseek",
+        steps: STEP_DEFINITIONS,
+      }),
+    });
+    const failed = traceReducer(started, {
+      type: "event",
+      event: event(2, "trace.failed", {
+        error: "连接意外中断",
+        terminationReason: "STREAM_DISCONNECTED",
+        totalDurationMs: 100,
+        toolCallCount: 1,
+      }),
+    });
+    const late = traceReducer(failed, {
+      type: "event",
+      event: event(3, "step.started", { status: "RUNNING" }, "diagnosis"),
+    });
+
+    expect(late).toBe(failed);
+    expect(late.status).toBe("FAILED");
+  });
 });

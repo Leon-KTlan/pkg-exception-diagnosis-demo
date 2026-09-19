@@ -17,6 +17,7 @@ import {
   Sparkles,
   TerminalSquare,
   XCircle,
+  Ban,
 } from "lucide-react";
 import type {
   Diagnosis,
@@ -39,6 +40,7 @@ const statusLabels: Record<StepStatus, string> = {
   ERROR: "失败",
   RETRYING: "重试中",
   BLOCKED: "已阻断",
+  CANCELLED: "已取消",
 };
 
 const statusIcons: Record<StepStatus, ReactNode> = {
@@ -48,6 +50,7 @@ const statusIcons: Record<StepStatus, ReactNode> = {
   ERROR: <XCircle size={14} />,
   RETRYING: <RotateCcw size={14} className="animate-spin" />,
   BLOCKED: <ShieldAlert size={14} />,
+  CANCELLED: <Ban size={14} />,
 };
 
 const EXPECTED_EVIDENCE_COUNT = 4;
@@ -96,6 +99,7 @@ export const TraceMeta = ({ state }: { state: TraceState }) => {
     RUNNING: "诊断中",
     COMPLETED: "诊断完成",
     FAILED: "诊断失败",
+    CANCELLED: "已取消",
   };
 
   const traceKind =
@@ -128,6 +132,9 @@ export const TraceMeta = ({ state }: { state: TraceState }) => {
     },
     { label: "总耗时", value: formatDuration(state.totalDurationMs) },
     { label: "运行状态", value: statusCopy[state.status] },
+    ...(state.terminationReason
+      ? [{ label: "终止原因", value: state.terminationReason }]
+      : []),
   ];
 
   return (
@@ -228,6 +235,7 @@ const JsonBlock = ({ label, value }: { label: string; value: unknown }) => {
 
 const describeOutput = (step: StepView) => {
   if (step.status === "PENDING") return "等待上游步骤完成后执行。";
+  if (step.status === "CANCELLED") return "诊断已取消，当前步骤未继续执行。";
   if (step.status === "BLOCKED") return step.error ?? "上游条件不足，当前步骤已阻断。";
   if (step.status === "ERROR") return step.error ?? "执行失败，请重新诊断。";
   if (step.status === "RETRYING") return step.error ?? "首次调用失败，正在自动重试。";
@@ -409,11 +417,17 @@ export const DiagnosisPanel = ({
   </section>
 );
 
-export const RunError = ({ message }: { message: string }) => (
+export const RunError = ({
+  message,
+  title = "诊断未能完成",
+}: {
+  message: string;
+  title?: string;
+}) => (
   <section className="run-error" role="alert">
     <AlertTriangle size={22} />
     <div>
-      <strong>诊断未能完成</strong>
+      <strong>{title}</strong>
       <p>{message}</p>
     </div>
   </section>

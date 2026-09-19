@@ -243,6 +243,7 @@ export const timeoutFixture: DemoFixture = {
         error: timeoutError,
         totalDurationMs: 4320,
         toolCallCount: 4,
+        terminationReason: "TOOL_TIMEOUT",
       }),
       undefined,
       160,

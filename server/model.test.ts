@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DeepSeekGateway } from "./model.js";
+import { DeepSeekGateway, MODEL_TIMEOUT_MS } from "./model.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("DeepSeekGateway", () => {
@@ -107,5 +108,23 @@ describe("DeepSeekGateway", () => {
       allowedEvidence: [],
       validationError: "severity 不合法",
     });
+  });
+
+  it("fails a model request that never settles at the model deadline", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockReturnValue(new Promise<Response>(() => undefined));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const gateway = new DeepSeekGateway({
+      apiKey: "sk-test-only",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-flash",
+    });
+    const assertion = expect(
+      gateway.identify("包裹 PKG-20260918 为什么还没有入库？", "PKG-20260918"),
+    ).rejects.toMatchObject({ code: "MODEL_TIMEOUT" });
+
+    await vi.advanceTimersByTimeAsync(MODEL_TIMEOUT_MS + 1);
+    await assertion;
   });
 });

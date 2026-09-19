@@ -486,6 +486,7 @@ describe("POST /api/demo/diagnoses/stream", () => {
 
     expect(failed?.type).toBe("trace.failed");
     expect(failedPayload.error).toBe("get_putaway_task 查询超时");
+    expect(failedPayload.terminationReason).toBe("TOOL_TIMEOUT");
     expect(failedPayload.toolCallCount).toBe(4);
     expect(events.filter((event) => event.type === "step.retrying")).toHaveLength(1);
     expect(events.filter((event) => event.type === "tool.call.started")).toHaveLength(4);
