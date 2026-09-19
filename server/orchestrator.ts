@@ -24,14 +24,13 @@ import {
 
 export interface RunDiagnosisOptions {
   question: string;
+  packageId: string;
   model: ModelGateway;
   tools: ToolRegistry;
   emit: (event: TraceEvent) => void | Promise<void>;
   minimumStepMs?: number;
   traceId?: string;
 }
-
-const packagePattern = /PKG-[A-Z0-9-]+/i;
 
 const delay = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
@@ -41,6 +40,7 @@ const toErrorMessage = (error: unknown) =>
 
 export const runDiagnosis = async ({
   question,
+  packageId,
   model,
   tools,
   emit: outputEvent,
@@ -273,18 +273,29 @@ export const runDiagnosis = async ({
 
   const context: AgentContext = {
     question,
-    packageId: "",
+    packageId,
   };
 
   try {
-    const intent = await runAgentStep("identify", { question }, () =>
-      model.identify(question),
-    );
-    const packageIdFromQuestion = question.match(packagePattern)?.[0]?.toUpperCase();
-    if (!packageIdFromQuestion || intent.packageId.toUpperCase() !== packageIdFromQuestion) {
-      throw new Error("意图识别结果与用户输入的包裹号不一致");
-    }
-    context.packageId = packageIdFromQuestion;
+    await runAgentStep("identify", { question }, async () => {
+      const intent = await model.identify(question);
+      if (
+        !intent ||
+        typeof intent.packageId !== "string" ||
+        intent.intent !== "WAREHOUSE_INBOUND_DIAGNOSIS" ||
+        typeof intent.normalizedQuestion !== "string" ||
+        !intent.normalizedQuestion.trim()
+      ) {
+        throw new Error("意图识别结果格式无效");
+      }
+      if (intent.packageId.trim().toUpperCase() !== packageId) {
+        throw new Error("意图识别结果与用户输入的包裹号不一致");
+      }
+      if (!intent.normalizedQuestion.toUpperCase().includes(packageId)) {
+        throw new Error("规范化问题未保留用户输入的包裹号");
+      }
+      return intent;
+    });
 
     context.packageRecord = await runToolStep<PackageRecord | null>(
       "package",

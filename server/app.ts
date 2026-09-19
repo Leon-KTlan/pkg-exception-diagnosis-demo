@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { TraceEvent } from "../shared/protocol.js";
 import { DeepSeekGateway, type ModelGateway } from "./model.js";
 import { runDiagnosis } from "./orchestrator.js";
+import { extractPackageId } from "./package-id.js";
 import { createWarehouseTools, type ToolRegistry } from "./tools.js";
 
 export interface AppDependencies {
@@ -11,8 +12,6 @@ export interface AppDependencies {
   tools?: ToolRegistry;
   minimumStepMs?: number;
 }
-
-const packageIdPattern = /^PKG-[A-Z0-9-]+$/i;
 
 const modelFromEnvironment = () => {
   const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
@@ -44,10 +43,10 @@ export const createApp = (dependencies: AppDependencies = {}) => {
 
   app.post("/api/diagnoses/stream", async (request, response) => {
     const question = String(request.body?.question ?? "").trim();
-    const packageId = String(request.body?.packageId ?? "").trim().toUpperCase();
-    if (!packageIdPattern.test(packageId) || !question.includes(packageId)) {
+    const packageId = extractPackageId(question);
+    if (!packageId) {
       response.status(400).json({
-        error: "请输入有效包裹号，并确保诊断问题中包含该包裹号。",
+        error: "请补充包裹号",
       });
       return;
     }
@@ -76,6 +75,7 @@ export const createApp = (dependencies: AppDependencies = {}) => {
 
     await runDiagnosis({
       question,
+      packageId,
       model,
       tools: dependencies.tools ?? createWarehouseTools(),
       emit: send,

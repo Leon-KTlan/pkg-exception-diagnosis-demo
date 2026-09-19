@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { STEP_DEFINITIONS, type Diagnosis, type StepView } from "../shared/protocol";
-import { DiagnosisPanel, StepTimeline } from "./components";
+import { DiagnosisPanel, StepInspector, StepTimeline } from "./components";
 
 describe("diagnosis presentation", () => {
   it("shows each step status directly in the timeline", () => {
@@ -47,5 +47,24 @@ describe("diagnosis presentation", () => {
     ).replaceAll("<!-- -->", "");
 
     expect(markup).toContain("证据：0/4");
+  });
+
+  it("shows the identify question and structured result in the existing inspector", () => {
+    const identify = {
+      ...STEP_DEFINITIONS.find((step) => step.id === "identify")!,
+      status: "SUCCESS" as const,
+      input: { question: "包裹 PKG-20260918 为什么还没有入库？" },
+      output: {
+        packageId: "PKG-20260918",
+        intent: "WAREHOUSE_INBOUND_DIAGNOSIS",
+        normalizedQuestion: "查询包裹 PKG-20260918 尚未完成入库的原因",
+      },
+    };
+
+    const markup = renderToStaticMarkup(createElement(StepInspector, { step: identify }));
+
+    expect(markup).toContain("PKG-20260918");
+    expect(markup).toContain("WAREHOUSE_INBOUND_DIAGNOSIS");
+    expect(markup).toContain("查询包裹 PKG-20260918 尚未完成入库的原因");
   });
 });

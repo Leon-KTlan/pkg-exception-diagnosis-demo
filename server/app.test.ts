@@ -19,11 +19,17 @@ import { createWarehouseTools, type WarehouseTool } from "./tools.js";
 class FakeModel implements ModelGateway {
   readonly modelName = "fake-deepseek";
   readonly tokenUsage = 42;
+  toolSelectionCalls = 0;
 
-  constructor(private readonly invalidEvidence = false) {}
+  constructor(
+    private readonly invalidEvidence = false,
+    private readonly identifyPackageId?: string,
+  ) {}
 
   async identify(question: string): Promise<IntentResult> {
-    const packageId = question.match(/PKG-[A-Z0-9-]+/i)?.[0]?.toUpperCase() ?? "";
+    const packageId =
+      this.identifyPackageId ??
+      question.match(/PKG-[A-Z0-9-]+/i)?.[0]?.toUpperCase() ?? "";
     return {
       packageId,
       intent: "WAREHOUSE_INBOUND_DIAGNOSIS",
@@ -35,6 +41,7 @@ class FakeModel implements ModelGateway {
     context: AgentContext,
     eligibleTools: WarehouseTool[],
   ): Promise<SelectedTool> {
+    this.toolSelectionCalls += 1;
     const name = eligibleTools[0].name;
     const argumentsByTool: Record<string, Record<string, unknown>> = {
       get_package: { packageId: context.packageId },
@@ -90,19 +97,26 @@ const parseEvents = (body: string) =>
     .filter((line): line is string => Boolean(line))
     .map((line) => JSON.parse(line.slice(5).trim()) as TraceEvent);
 
-const createTestApp = (invalidEvidence = false) =>
-  createApp({
-    createModel: () => new FakeModel(invalidEvidence),
-    tools: createWarehouseTools(),
-    minimumStepMs: 0,
-  });
+const createTestApp = (
+  options: { invalidEvidence?: boolean; identifyPackageId?: string } = {},
+) => {
+  const model = new FakeModel(options.invalidEvidence, options.identifyPackageId);
+  return {
+    app: createApp({
+      createModel: () => model,
+      tools: createWarehouseTools(),
+      minimumStepMs: 0,
+    }),
+    model,
+  };
+};
 
 describe("POST /api/diagnoses/stream", () => {
   it("streams an ordered, evidence-backed diagnosis for the primary package", async () => {
-    const response = await request(createTestApp())
+    const { app } = createTestApp();
+    const response = await request(app)
       .post("/api/diagnoses/stream")
       .send({
-        packageId: "PKG-20260918",
         question: "包裹 PKG-20260918 为什么还没有入库？",
       })
       .expect(200)
@@ -116,6 +130,16 @@ describe("POST /api/diagnoses/stream", () => {
 
     const completed = events.at(-1);
     expect(completed?.type).toBe("trace.completed");
+    expect(
+      events.find((event) => event.type === "step.completed" && event.stepId === "identify")?.payload,
+    ).toMatchObject({
+      status: "SUCCESS",
+      output: {
+        packageId: "PKG-20260918",
+        intent: "WAREHOUSE_INBOUND_DIAGNOSIS",
+        normalizedQuestion: "包裹 PKG-20260918 为什么还没有入库？",
+      },
+    });
     const payload = completed?.payload as unknown as TraceCompletedPayload;
     expect(payload.diagnosis.status).toBe("CONFIRMED");
     expect(payload.evidence).toHaveLength(4);
@@ -125,10 +149,10 @@ describe("POST /api/diagnoses/stream", () => {
   });
 
   it("distinguishes an empty business result from a tool failure", async () => {
-    const response = await request(createTestApp())
+    const { app } = createTestApp();
+    const response = await request(app)
       .post("/api/diagnoses/stream")
       .send({
-        packageId: "PKG-404",
         question: "包裹 PKG-404 为什么还没有入库？",
       })
       .expect(200);
@@ -149,10 +173,10 @@ describe("POST /api/diagnoses/stream", () => {
   });
 
   it("retries one timeout and blocks downstream steps after the second failure", async () => {
-    const response = await request(createTestApp())
+    const { app } = createTestApp();
+    const response = await request(app)
       .post("/api/diagnoses/stream")
       .send({
-        packageId: "PKG-TIMEOUT",
         question: "包裹 PKG-TIMEOUT 为什么还没有入库？",
       })
       .expect(200);
@@ -172,10 +196,10 @@ describe("POST /api/diagnoses/stream", () => {
   });
 
   it("rejects a final diagnosis that cites evidence the tools never produced", async () => {
-    const response = await request(createTestApp(true))
+    const { app } = createTestApp({ invalidEvidence: true });
+    const response = await request(app)
       .post("/api/diagnoses/stream")
       .send({
-        packageId: "PKG-20260918",
         question: "包裹 PKG-20260918 为什么还没有入库？",
       })
       .expect(200);
@@ -188,5 +212,23 @@ describe("POST /api/diagnoses/stream", () => {
     ).toHaveLength(1);
     expect(events.at(-1)?.type).toBe("trace.failed");
     expect(JSON.stringify(events)).not.toContain('"status":"CONFIRMED","summary"');
+  });
+
+  it("fails identify when the model returns a different package and does not call tools", async () => {
+    const { app, model } = createTestApp({ identifyPackageId: "PKG-404" });
+    const response = await request(app)
+      .post("/api/diagnoses/stream")
+      .send({ question: "包裹 PKG-20260918 为什么还没有入库？" })
+      .expect(200);
+
+    const events = parseEvents(response.text);
+    expect(
+      events.find((event) => event.type === "step.failed" && event.stepId === "identify")?.payload,
+    ).toMatchObject({ status: "ERROR" });
+    expect(
+      events.find((event) => event.type === "step.completed" && event.stepId === "package")?.payload,
+    ).toMatchObject({ status: "BLOCKED" });
+    expect(events.at(-1)?.type).toBe("trace.failed");
+    expect(model.toolSelectionCalls).toBe(0);
   });
 });

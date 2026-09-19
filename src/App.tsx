@@ -23,10 +23,8 @@ import {
 import { createInitialTraceState, traceReducer } from "./state";
 import type { StepId } from "../shared/protocol";
 
-const packagePattern = /^PKG-[A-Z0-9-]+$/;
-
 function App() {
-  const [packageId, setPackageId] = useState("PKG-20260918");
+  const [question, setQuestion] = useState("包裹 PKG-20260918 为什么还没有入库？");
   const [state, dispatch] = useReducer(traceReducer, undefined, createInitialTraceState);
   const [selectedStepId, setSelectedStepId] = useState<StepId | null>(null);
   const [formError, setFormError] = useState<string>();
@@ -49,13 +47,13 @@ function App() {
   );
 
   const startDiagnosis = async () => {
-    const normalizedPackageId = packageId.trim().toUpperCase();
-    if (!packagePattern.test(normalizedPackageId)) {
-      setFormError("请输入 PKG- 开头的有效包裹号，例如 PKG-20260918。");
+    const trimmedQuestion = question.trim();
+    if (!trimmedQuestion) {
+      setFormError("请输入要诊断的问题。");
       return;
     }
 
-    setPackageId(normalizedPackageId);
+    setQuestion(trimmedQuestion);
     setFormError(undefined);
     setSelectedStepId(null);
     dispatch({ type: "reset" });
@@ -65,7 +63,7 @@ function App() {
 
     try {
       await streamDiagnosis({
-        packageId: normalizedPackageId,
+        question: trimmedQuestion,
         signal: controller.signal,
         onEvent: (event) => dispatch({ type: "event", event }),
       });
@@ -103,7 +101,7 @@ function App() {
               <em>都有迹可循。</em>
             </h1>
             <p>
-              输入包裹号，实时查看 Agent 如何调用仓储工具、识别阻塞点，并用原始业务数据生成可追溯的证据链。
+              输入自然语言问题，实时查看 Agent 如何调用仓储工具、识别阻塞点，并用原始业务数据生成可追溯的证据链。
             </p>
           </div>
           <div className="hero-annotation" aria-hidden="true">
@@ -119,14 +117,14 @@ function App() {
         <section className="query-console" aria-label="发起诊断">
           <div className="query-label">
             <Search size={18} />
-            <span>包裹号</span>
+            <span>诊断问题</span>
           </div>
           <div className="query-input-wrap">
             <input
-              aria-label="包裹号"
-              value={packageId}
+              aria-label="诊断问题"
+              value={question}
               onChange={(event) => {
-                setPackageId(event.target.value.toUpperCase());
+                setQuestion(event.target.value);
                 setFormError(undefined);
               }}
               onKeyDown={(event) => {
@@ -135,7 +133,6 @@ function App() {
               disabled={running}
               spellCheck={false}
             />
-            <span className="input-question">为什么还没有入库？</span>
           </div>
           <button
             className="run-button"
@@ -157,7 +154,7 @@ function App() {
                 key={value}
                 disabled={running}
                 onClick={() => {
-                  setPackageId(value);
+                  setQuestion(value);
                   setFormError(undefined);
                 }}
               >

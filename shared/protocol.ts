@@ -120,7 +120,7 @@ export const STEP_DEFINITIONS: StepDefinition[] = [
   {
     id: "identify",
     title: "识别问题",
-    description: "提取包裹号并识别诊断意图",
+    description: "解析包裹号并识别诊断意图",
     kind: "AGENT_NODE",
     toolName: "intent_router",
   },

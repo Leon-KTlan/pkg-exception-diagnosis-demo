@@ -1,7 +1,7 @@
 import type { TraceEvent } from "../shared/protocol";
 
 interface StreamDiagnosisOptions {
-  packageId: string;
+  question: string;
   signal?: AbortSignal;
   onEvent: (event: TraceEvent) => void;
 }
@@ -16,17 +16,14 @@ const parseError = async (response: Response) => {
 };
 
 export const streamDiagnosis = async ({
-  packageId,
+  question,
   signal,
   onEvent,
 }: StreamDiagnosisOptions) => {
   const response = await fetch("/api/diagnoses/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      packageId,
-      question: `包裹 ${packageId} 为什么还没有入库？`,
-    }),
+    body: JSON.stringify({ question }),
     signal,
   });
 
