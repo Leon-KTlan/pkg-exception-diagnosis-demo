@@ -1,10 +1,16 @@
-import type { TraceEvent } from "../shared/protocol";
+import type { TraceEvent, TraceMode } from "../shared/protocol";
+
+export type DiagnosisMode = TraceMode;
 
 interface StreamDiagnosisOptions {
+  mode?: DiagnosisMode;
   question: string;
   signal?: AbortSignal;
   onEvent: (event: TraceEvent) => void;
 }
+
+export const getDiagnosisEndpoint = (mode: DiagnosisMode) =>
+  mode === "demo" ? "/api/demo/diagnoses/stream" : "/api/diagnoses/stream";
 
 const parseError = async (response: Response) => {
   try {
@@ -16,11 +22,12 @@ const parseError = async (response: Response) => {
 };
 
 export const streamDiagnosis = async ({
+  mode = "live",
   question,
   signal,
   onEvent,
 }: StreamDiagnosisOptions) => {
-  const response = await fetch("/api/diagnoses/stream", {
+  const response = await fetch(getDiagnosisEndpoint(mode), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question }),

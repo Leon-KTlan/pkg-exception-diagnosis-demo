@@ -2,9 +2,47 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { STEP_DEFINITIONS, type Diagnosis, type StepView } from "../shared/protocol";
-import { DiagnosisPanel, StepInspector, StepTimeline } from "./components";
+import { DiagnosisPanel, StepInspector, StepTimeline, TraceMeta } from "./components";
+import { createInitialTraceState } from "./state";
 
 describe("diagnosis presentation", () => {
+  it("labels Demo trace data and simulated tool calls", () => {
+    const state = {
+      ...createInitialTraceState(),
+      traceId: "tr_demo_123456789abc",
+      mode: "demo" as const,
+      simulated: true,
+      model: "固定回放",
+      toolCallCount: 3,
+    };
+
+    const markup = renderToStaticMarkup(createElement(TraceMeta, { state }));
+
+    expect(markup).toContain("DEMO");
+    expect(markup).toContain("模拟数据");
+    expect(markup).toContain("固定回放");
+    expect(markup).toContain("模拟工具调用：3 次");
+  });
+
+  it("keeps Live trace wording and real model information", () => {
+    const state = {
+      ...createInitialTraceState(),
+      traceId: "tr_live_123456789abc",
+      mode: "live" as const,
+      simulated: false,
+      model: "fake-deepseek",
+      toolCallCount: 2,
+    };
+
+    const markup = renderToStaticMarkup(createElement(TraceMeta, { state }));
+
+    expect(markup).toContain("LIVE");
+    expect(markup).toContain("实时诊断");
+    expect(markup).toContain("fake-deepseek");
+    expect(markup).toContain("工具调用：2 次");
+    expect(markup).not.toContain("模拟工具调用");
+  });
+
   it("shows each step status directly in the timeline", () => {
     const steps: StepView[] = STEP_DEFINITIONS.map((step, index) => ({
       ...step,

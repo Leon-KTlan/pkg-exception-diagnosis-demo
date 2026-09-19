@@ -24,6 +24,7 @@ import type {
   StepId,
   StepStatus,
   StepView,
+  TraceMode,
   TraceStatus,
 } from "../shared/protocol";
 import type { TraceState } from "./state";
@@ -64,6 +65,31 @@ export const StatusPill = ({ status }: { status: StepStatus }) => (
   </span>
 );
 
+export const ModeControl = ({
+  mode,
+  onChange,
+}: {
+  mode: TraceMode;
+  onChange: (mode: TraceMode) => void;
+}) => (
+  <div className="mode-control" role="group" aria-label="诊断运行模式">
+    {([
+      ["demo", "Demo · 模拟数据"],
+      ["live", "Live · 真实诊断"],
+    ] as const).map(([value, label]) => (
+      <button
+        key={value}
+        type="button"
+        className={classNames("mode-option", mode === value && "is-selected")}
+        aria-pressed={mode === value}
+        onClick={() => onChange(value)}
+      >
+        {label}
+      </button>
+    ))}
+  </div>
+);
+
 export const TraceMeta = ({ state }: { state: TraceState }) => {
   const statusCopy: Record<TraceStatus, string> = {
     IDLE: "待启动",
@@ -72,11 +98,34 @@ export const TraceMeta = ({ state }: { state: TraceState }) => {
     FAILED: "诊断失败",
   };
 
+  const traceKind =
+    state.mode === "demo" && state.simulated === true
+      ? "demo"
+      : state.mode === "live" && state.simulated === false
+        ? "live"
+        : undefined;
   const cells = [
-    { label: "运行模式", value: "LIVE", accent: true },
+    {
+      label: "运行模式",
+      value: traceKind ? traceKind.toUpperCase() : "等待创建",
+      accent: Boolean(traceKind),
+      accentClass: traceKind ? `${traceKind}-value` : "",
+    },
+    {
+      label: "数据来源",
+      value: traceKind === "demo" ? "模拟数据" : traceKind === "live" ? "实时诊断" : "等待创建",
+      accent: false,
+      accentClass: "",
+    },
     { label: "Trace ID", value: state.traceId ?? "等待创建" },
-    { label: "当前模型", value: state.model ?? "DeepSeek" },
-    { label: "工具调用", value: `${state.toolCallCount} 次` },
+    { label: "当前模型", value: state.model ?? "等待创建" },
+    {
+      label: "调用统计",
+      value:
+        traceKind === "demo"
+          ? `模拟工具调用：${state.toolCallCount} 次`
+          : `工具调用：${state.toolCallCount} 次`,
+    },
     { label: "总耗时", value: formatDuration(state.totalDurationMs) },
     { label: "运行状态", value: statusCopy[state.status] },
   ];
@@ -86,7 +135,7 @@ export const TraceMeta = ({ state }: { state: TraceState }) => {
       {cells.map((cell) => (
         <div className="trace-cell" key={cell.label}>
           <span>{cell.label}</span>
-          <strong className={cell.accent ? "live-value" : ""}>{cell.value}</strong>
+          <strong className={cell.accent ? cell.accentClass : ""}>{cell.value}</strong>
         </div>
       ))}
     </section>

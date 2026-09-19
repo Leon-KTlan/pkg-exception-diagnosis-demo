@@ -15,13 +15,15 @@ import {
   DiagnosisPanel,
   EvidenceChain,
   LiveClock,
+  ModeControl,
   RunError,
   StepInspector,
   StepTimeline,
   TraceMeta,
 } from "./components";
 import { createInitialTraceState, traceReducer } from "./state";
-import type { StepId } from "../shared/protocol";
+import { createRunGeneration } from "./run-generation";
+import type { StepId, TraceMode } from "../shared/protocol";
 
 export const DEFAULT_QUESTION = "包裹 PKG-20260918 为什么还没有入库？";
 
@@ -34,9 +36,11 @@ export const SCENARIO_QUESTIONS = [
 function App() {
   const [question, setQuestion] = useState(DEFAULT_QUESTION);
   const [state, dispatch] = useReducer(traceReducer, undefined, createInitialTraceState);
+  const [mode, setMode] = useState<TraceMode>("demo");
   const [selectedStepId, setSelectedStepId] = useState<StepId | null>(null);
   const [formError, setFormError] = useState<string>();
   const abortController = useRef<AbortController | undefined>(undefined);
+  const runGeneration = useRef(createRunGeneration());
 
   const running = state.status === "RUNNING";
   const selectedStep = useMemo(
@@ -61,24 +65,44 @@ function App() {
       return;
     }
 
+    const generation = runGeneration.current.next();
+    abortController.current?.abort();
     setQuestion(trimmedQuestion);
     setFormError(undefined);
     setSelectedStepId(null);
     dispatch({ type: "reset" });
-    abortController.current?.abort();
     const controller = new AbortController();
     abortController.current = controller;
 
     try {
       await streamDiagnosis({
+        mode,
         question: trimmedQuestion,
         signal: controller.signal,
-        onEvent: (event) => dispatch({ type: "event", event }),
+        onEvent: (event) => {
+          if (!runGeneration.current.isCurrent(generation)) return;
+          dispatch({ type: "event", event });
+        },
       });
     } catch (error) {
       if (controller.signal.aborted) return;
       setFormError(error instanceof Error ? error.message : "无法连接诊断服务");
+    } finally {
+      if (abortController.current === controller) {
+        abortController.current = undefined;
+      }
     }
+  };
+
+  const switchMode = (nextMode: TraceMode) => {
+    if (nextMode === mode) return;
+    runGeneration.current.next();
+    abortController.current?.abort();
+    abortController.current = undefined;
+    dispatch({ type: "reset" });
+    setSelectedStepId(null);
+    setFormError(undefined);
+    setMode(nextMode);
   };
 
   return (
@@ -121,6 +145,14 @@ function App() {
             <span>PUTAWAY</span>
           </div>
         </section>
+
+        <div className="mode-bar">
+          <div>
+            <span className="eyebrow">运行边界</span>
+            <p>先选择数据来源，再发起诊断</p>
+          </div>
+          <ModeControl mode={mode} onChange={switchMode} />
+        </div>
 
         <section className="query-console" aria-label="发起诊断">
           <div className="query-label">

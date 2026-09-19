@@ -9,11 +9,14 @@ import {
   type TraceEvent,
   type TraceFailedPayload,
   type TraceStartedPayload,
+  type TraceMode,
   type TraceStatus,
 } from "../shared/protocol";
 
 export interface TraceState {
   traceId?: string;
+  mode?: TraceMode;
+  simulated?: boolean;
   question?: string;
   model?: string;
   status: TraceStatus;
@@ -70,6 +73,12 @@ export const traceReducer = (
   }
 
   const { event } = action;
+  if (state.traceId && event.traceId !== state.traceId) {
+    return state;
+  }
+  if (!state.traceId && event.type !== "trace.started") {
+    return state;
+  }
   if (event.sequence <= state.lastSequence) {
     return state;
   }
@@ -78,9 +87,18 @@ export const traceReducer = (
   switch (event.type) {
     case "trace.started": {
       const payload = event.payload as unknown as TraceStartedPayload;
+      if (
+        (payload.mode !== "demo" && payload.mode !== "live") ||
+        typeof payload.simulated !== "boolean" ||
+        (payload.mode === "demo") !== payload.simulated
+      ) {
+        return state;
+      }
       return {
         ...nextState,
         traceId: event.traceId,
+        mode: payload.mode,
+        simulated: payload.simulated,
         question: payload.question,
         model: payload.model,
         status: "RUNNING",

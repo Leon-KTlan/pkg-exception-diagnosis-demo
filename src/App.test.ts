@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_QUESTION, SCENARIO_QUESTIONS } from "./App";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import App, { DEFAULT_QUESTION, SCENARIO_QUESTIONS } from "./App";
 
 describe("diagnosis question scenarios", () => {
+  it("starts in Demo mode with an explicit authenticity boundary", () => {
+    const markup = renderToStaticMarkup(createElement(App));
+
+    expect(markup).toContain("Demo · 模拟数据");
+    expect(markup).toContain("Live · 真实诊断");
+    expect(markup).toContain('aria-pressed="true"');
+  });
+
   it("uses a complete natural-language question as the default", () => {
     expect(DEFAULT_QUESTION).toBe("包裹 PKG-20260918 为什么还没有入库？");
   });
