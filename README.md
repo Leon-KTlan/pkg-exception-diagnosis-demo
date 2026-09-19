@@ -6,7 +6,9 @@
 
 ## Demo / Preview
 
-![Demo Mode 完整诊断流程](docs/assets/demo-mode.gif)
+<p align="center">
+  <img src="docs/assets/demo-mode.gif" alt="Demo Mode 完整诊断流程" width="1100" />
+</p>
 
 上面的 GIF 展示的是 **Demo Mode**：页面使用模拟数据和固定、确定性的 SSE replay，不调用真实模型、真实仓储 tools 或外部服务。它只是项目展示材料，不是功能正确性的自动化证明。
 
