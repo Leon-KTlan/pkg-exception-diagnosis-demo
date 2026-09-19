@@ -19,6 +19,7 @@ import { createWarehouseTools, type WarehouseTool } from "./tools.js";
 class FakeModel implements ModelGateway {
   readonly modelName = "fake-deepseek";
   readonly tokenUsage = 42;
+  identifyCalls = 0;
   toolSelectionCalls = 0;
 
   constructor(
@@ -27,6 +28,7 @@ class FakeModel implements ModelGateway {
   ) {}
 
   async identify(question: string): Promise<IntentResult> {
+    this.identifyCalls += 1;
     const packageId =
       this.identifyPackageId ??
       question.match(/PKG-[A-Z0-9-]+/i)?.[0]?.toUpperCase() ?? "";
@@ -101,13 +103,18 @@ const createTestApp = (
   options: { invalidEvidence?: boolean; identifyPackageId?: string } = {},
 ) => {
   const model = new FakeModel(options.invalidEvidence, options.identifyPackageId);
+  const modelFactoryCalls = { count: 0 };
   return {
     app: createApp({
-      createModel: () => model,
+      createModel: () => {
+        modelFactoryCalls.count += 1;
+        return model;
+      },
       tools: createWarehouseTools(),
       minimumStepMs: 0,
     }),
     model,
+    modelFactoryCalls,
   };
 };
 
@@ -230,5 +237,111 @@ describe("POST /api/diagnoses/stream", () => {
     ).toMatchObject({ status: "BLOCKED" });
     expect(events.at(-1)?.type).toBe("trace.failed");
     expect(model.toolSelectionCalls).toBe(0);
+  });
+
+  it("rejects a question without a package before creating the model", async () => {
+    const { app, model, modelFactoryCalls } = createTestApp();
+    const response = await request(app)
+      .post("/api/diagnoses/stream")
+      .send({ question: "为什么我的包裹还没有入库？" })
+      .expect(400)
+      .expect("Content-Type", /json/);
+
+    expect(response.body).toEqual({ error: "请补充包裹号" });
+    expect(modelFactoryCalls.count).toBe(0);
+    expect(model.identifyCalls).toBe(0);
+    expect(model.toolSelectionCalls).toBe(0);
+    expect(response.text).not.toContain("trace.started");
+  });
+
+  it("rejects multiple different packages before creating the model", async () => {
+    const { app, model, modelFactoryCalls } = createTestApp();
+    const response = await request(app)
+      .post("/api/diagnoses/stream")
+      .send({ question: "帮我看看 PKG-123 和 PKG-456 为什么都没入库" })
+      .expect(400)
+      .expect("Content-Type", /json/);
+
+    expect(response.body).toEqual({ error: "一次只能诊断一个包裹" });
+    expect(modelFactoryCalls.count).toBe(0);
+    expect(model.identifyCalls).toBe(0);
+    expect(model.toolSelectionCalls).toBe(0);
+    expect(response.text).not.toContain("trace.started");
+  });
+
+  it("treats repeated case-insensitive package IDs as one package", async () => {
+    const { app } = createTestApp();
+    const response = await request(app)
+      .post("/api/diagnoses/stream")
+      .send({ question: "请查看 PKG-20260918；pkg-20260918 为什么还没入库？" })
+      .expect(200);
+
+    expect(parseEvents(response.text).at(-1)?.type).toBe("trace.completed");
+  });
+
+  it("extracts a package surrounded by Chinese and English punctuation", async () => {
+    const { app } = createTestApp();
+    const response = await request(app)
+      .post("/api/diagnoses/stream")
+      .send({ question: "请查看（pkg-20260918），为什么还没入库？" })
+      .expect(200);
+
+    expect(parseEvents(response.text).at(-1)?.type).toBe("trace.completed");
+  });
+
+  it.each([
+    ["XPKG-20260918", "请补充包裹号"],
+    ["PKG--20260918", "请补充包裹号"],
+    ["PKG-20260918-", "请补充包裹号"],
+    ["PKG-20260918_EXTRA", "请补充包裹号"],
+  ])("does not extract a package fragment from %s", async (question, error) => {
+    const { app, model, modelFactoryCalls } = createTestApp();
+    const response = await request(app)
+      .post("/api/diagnoses/stream")
+      .send({ question })
+      .expect(400);
+
+    expect(response.body).toEqual({ error });
+    expect(modelFactoryCalls.count).toBe(0);
+    expect(model.identifyCalls).toBe(0);
+    expect(model.toolSelectionCalls).toBe(0);
+  });
+
+  it.each([
+    [{}, "问题必须是字符串"],
+    [{ question: 123 }, "问题必须是字符串"],
+    [{ question: "   " }, "问题不能为空"],
+  ])("rejects invalid question input %j", async (body, error) => {
+    const { app, model, modelFactoryCalls } = createTestApp();
+    const response = await request(app)
+      .post("/api/diagnoses/stream")
+      .send(body)
+      .expect(400);
+
+    expect(response.body).toEqual({ error });
+    expect(modelFactoryCalls.count).toBe(0);
+    expect(model.identifyCalls).toBe(0);
+    expect(model.toolSelectionCalls).toBe(0);
+  });
+
+  it("accepts exactly 500 Unicode characters and rejects 501", async () => {
+    const packageId = "PKG-20260918";
+    const boundaryQuestion = `${"啊".repeat(500 - Array.from(packageId).length)}${packageId}`;
+    const accepted = createTestApp();
+    await request(accepted.app)
+      .post("/api/diagnoses/stream")
+      .send({ question: boundaryQuestion })
+      .expect(200);
+
+    const rejected = createTestApp();
+    const response = await request(rejected.app)
+      .post("/api/diagnoses/stream")
+      .send({ question: `${boundaryQuestion}啊` })
+      .expect(400);
+
+    expect(response.body).toEqual({ error: "问题长度不能超过500个Unicode字符" });
+    expect(rejected.modelFactoryCalls.count).toBe(0);
+    expect(rejected.model.identifyCalls).toBe(0);
+    expect(rejected.model.toolSelectionCalls).toBe(0);
   });
 });
