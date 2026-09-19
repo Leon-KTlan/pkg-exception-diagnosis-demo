@@ -211,4 +211,54 @@ describe("traceReducer", () => {
     expect(late).toBe(failed);
     expect(late.status).toBe("FAILED");
   });
+  it("selects the failed tool instead of its blocked dependents", () => {
+    let state = traceReducer(createInitialTraceState(), {
+      type: "event",
+      event: event(1, "trace.started", {
+        mode: "demo", simulated: true, question: "PKG-TIMEOUT",
+        model: "固定回放", steps: STEP_DEFINITIONS,
+      }),
+    });
+    state = traceReducer(state, {
+      type: "event",
+      event: event(2, "step.failed", { status: "ERROR", attempt: 2 }, "putaway"),
+    });
+    state = traceReducer(state, {
+      type: "event",
+      event: event(3, "step.completed", { status: "BLOCKED" }, "diagnosis"),
+    });
+    state = traceReducer(state, {
+      type: "event",
+      event: event(4, "trace.failed", {
+        error: "get_putaway_task 查询超时", terminationReason: "TOOL_TIMEOUT",
+        totalDurationMs: 100, toolCallCount: 4,
+      }),
+    });
+    expect(state.activeStepId).toBe("putaway");
+    expect(state.steps.find((step) => step.id === "putaway")?.attempt).toBe(2);
+  });
+
+  it("retains received work and ignores late completion after cancellation", () => {
+    const started = traceReducer(createInitialTraceState(), {
+      type: "event",
+      event: event(1, "trace.started", {
+        mode: "live", simulated: false, question: "PKG-20260918",
+        model: "fake-model", steps: STEP_DEFINITIONS,
+      }),
+    });
+    const received = traceReducer(started, {
+      type: "event",
+      event: event(2, "step.completed", { status: "SUCCESS", output: { packageId: "PKG-20260918" } }, "identify"),
+    });
+    const cancelled = traceReducer(received, {
+      type: "terminate", status: "CANCELLED", error: "已取消",
+      terminationReason: "USER_CANCELLED",
+    });
+    const late = traceReducer(cancelled, {
+      type: "event", event: event(3, "step.started", { status: "RUNNING" }, "package"),
+    });
+    expect(late).toBe(cancelled);
+    expect(late.steps[0]).toMatchObject({ status: "SUCCESS", output: { packageId: "PKG-20260918" } });
+  });
+
 });
