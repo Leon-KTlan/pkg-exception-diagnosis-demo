@@ -4,9 +4,33 @@
 
 ![入库诊断台完成态](docs/screenshots/completed-state.png)
 
+## Demo / Preview
+
+![Demo Mode 完整诊断流程](docs/assets/demo-mode.gif)
+
+上面的 GIF 展示的是 **Demo Mode**：页面使用模拟数据和固定、确定性的 SSE replay，不调用真实模型、真实仓储 tools 或外部服务。它只是项目展示材料，不是功能正确性的自动化证明。
+
+页面默认进入 Demo Mode，可直接回放以下三个固定场景：
+
+- `PKG-20260918`：完整成功诊断
+- `PKG-404`：数据不足 / 证据不足
+- `PKG-TIMEOUT`：工具超时、重试后失败
+
+只有主动切换到 `Live · 真实诊断` 后，页面才会运行现有的真实诊断链路，并使用模型和仓储工具。
+
 ## 3 分钟体验
 
-### 1. 配置 DeepSeek
+### 1. 先体验 Demo Mode（无需模型 Key）
+
+Demo Mode 默认启动，不依赖模型 Key：
+
+```bash
+docker compose up --build
+```
+
+打开 [http://localhost:5173](http://localhost:5173)，保留默认问题并点击“开始诊断”。
+
+### 2. 如需体验 Live Mode，再配置 DeepSeek
 
 复制环境变量模板：
 
@@ -24,15 +48,7 @@ DEEPSEEK_MODEL=deepseek-flash
 
 真实 Key 不应提交到 Git，也不会被发送到浏览器。
 
-### 2. Docker Compose 启动
-
-```bash
-docker compose up --build
-```
-
-打开 [http://localhost:5173](http://localhost:5173)，输入或保留 `PKG-20260918`，点击“开始诊断”。
-
-### 3. 体验三个场景
+### 3. 体验三个 Demo 场景
 
 | 包裹号 | 场景 | 预期结果 |
 | --- | --- | --- |
@@ -55,10 +71,14 @@ npm run dev
 
 ## 架构
 
+页面默认通过 `POST /api/demo/diagnoses/stream` 回放固定 Demo fixture；切换到 Live 后，才通过 `POST /api/diagnoses/stream` 进入真实模型、工具和编排链路。
+
 ```mermaid
 flowchart LR
     U[仓库运营人员] -->|包裹问题| W[React 诊断工作区]
-    W -->|POST /api/diagnoses/stream| A[Node Agent 编排器]
+    W -->|Demo: 固定 SSE replay| R[Demo Replay]
+    W -->|Live: POST /api/diagnoses/stream| A[Node Agent 编排器]
+    R -->|共享领域 SSE| W
     A -->|Tool Calling| D[DeepSeek API]
     D -->|工具选择与诊断| A
     A --> P[get_package]
@@ -114,13 +134,14 @@ trace.completed
 trace.failed
 ```
 
-每条事件包含 `traceId`、单调递增的 `sequence`、`timestamp`、`stepId`、`type` 和 `payload`。客户端按 `sequence` 幂等地更新状态，避免重连或重复事件累加错误。
+每条事件包含 `traceId`、单调递增的 `sequence`、`timestamp`、`stepId`、`type` 和 `payload`。`trace.started` 还会标记 `mode` 与 `simulated`，用于区分 Demo 和 Live 的数据来源。客户端按 `sequence` 幂等地更新状态，并结合 generation/traceId 防止旧运行污染当前 Trace。
 
 ## 安全与真实性
 
 - DeepSeek Key 只由 Node 服务读取，不进入 Vite 构建参数或浏览器请求。
-- 项目没有 Replay、Sample Trace 或无 Key 的伪实时降级。
-- 仓储工具是真实执行的本地函数，数据为完全虚构的演示数据。
+- Demo Mode 是显式选择的固定 SSE replay，不是 Live 失败后的自动降级；Live 失败时不会自动切换到 Demo。
+- Demo fixture 中的工具事件只是模拟调用；只有 Live 模式才会真正执行仓储工具。
+- Live 模式使用真实模型和仓储工具，数据为完全虚构的本地演示数据。
 - 证据链只能来自成功的 Tool Output。
 - 模型返回不存在的证据 ID 时会得到一次纠正机会，再次失败则终止 Trace。
 - 页面不展示模型思考过程、完整 Prompt 或 API Key。
@@ -140,14 +161,16 @@ npm run build
 - 非法证据引用被拒绝
 - 客户端忽略重复或过期事件
 - `BLOCKED` 状态可见且不会被误判为成功
+- Demo 三个 fixture 的确定性 SSE replay、模式 metadata 和错误边界
+- Demo/Live endpoint 选择、traceId 隔离与旧事件丢弃
 
 ## 项目结构
 
 ```text
 src/        React 页面、组件、SSE 客户端与状态更新
-server/     Agent 编排、DeepSeek 适配、Mock 工具与 API
+server/     Agent 编排、DeepSeek 适配、Mock 工具、Demo replay 与 API
 shared/     前后端共享的事件和诊断协议
-docs/       Agent 配置与演示截图
+docs/       Agent 配置、演示截图与 Demo GIF
 ```
 
 ## 明确的非目标
