@@ -36,7 +36,7 @@ export interface SelectedTool {
 export interface ModelGateway {
   readonly modelName: string;
   readonly tokenUsage: number;
-  identify(question: string): Promise<IntentResult>;
+  identify(question: string, expectedPackageId?: string): Promise<IntentResult>;
   selectTool(context: AgentContext, eligibleTools: WarehouseTool[]): Promise<SelectedTool>;
   detectAnomaly(context: AgentContext): Promise<AnomalyResult>;
   composeDiagnosis(
@@ -140,12 +140,15 @@ export class DeepSeekGateway implements ModelGateway {
     return message;
   }
 
-  async identify(question: string) {
+  async identify(question: string, expectedPackageId?: string) {
+    const packageIdInstruction = expectedPackageId
+      ? `服务端已从用户问题中确定唯一包裹号为 ${expectedPackageId}。packageId 必须输出该值；normalizedQuestion 必须原样保留该包裹号，包括连字符和大小写，只规范化其他问题文字。`
+      : "必须原样保留用户问题中的包裹号，包括连字符和大小写。";
     const messages: ChatMessage[] = [
       {
         role: "system",
         content:
-          "你是仓储异常诊断路由器。只输出 JSON，字段为 packageId、intent、normalizedQuestion。intent 必须是 WAREHOUSE_INBOUND_DIAGNOSIS。不得补造用户没有提供的包裹号。",
+          `你是仓储异常诊断路由器。只输出 JSON，字段为 packageId、intent、normalizedQuestion。intent 必须是 WAREHOUSE_INBOUND_DIAGNOSIS。不得补造用户没有提供的包裹号。${packageIdInstruction}`,
       },
       { role: "user", content: question },
     ];

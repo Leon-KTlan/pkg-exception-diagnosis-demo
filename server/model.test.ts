@@ -33,7 +33,7 @@ describe("DeepSeekGateway", () => {
       model: "deepseek-flash",
     });
 
-    await gateway.identify("包裹 PKG-20260918 为什么还没有入库？");
+    await gateway.identify("包裹（PKG-20260918）为什么还没有入库？", "PKG-20260918");
 
     const request = fetchMock.mock.calls[0][1] as RequestInit;
     expect(JSON.parse(String(request.body))).toMatchObject({
@@ -41,6 +41,15 @@ describe("DeepSeekGateway", () => {
       temperature: 0,
       thinking: { type: "disabled" },
     });
+    const body = JSON.parse(String(request.body)) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(body.messages[0].content).toContain(
+      "服务端已从用户问题中确定唯一包裹号为 PKG-20260918",
+    );
+    expect(body.messages[0].content).toContain(
+      "normalizedQuestion 必须原样保留该包裹号",
+    );
   });
 
   it("constrains empty-evidence diagnoses to a valid low severity result", async () => {

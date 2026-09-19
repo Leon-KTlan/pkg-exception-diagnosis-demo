@@ -278,7 +278,7 @@ export const runDiagnosis = async ({
 
   try {
     await runAgentStep("identify", { question }, async () => {
-      const intent = await model.identify(question);
+      const intent = await model.identify(question, packageId);
       if (
         !intent ||
         typeof intent.packageId !== "string" ||
