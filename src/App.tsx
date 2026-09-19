@@ -23,8 +23,16 @@ import {
 import { createInitialTraceState, traceReducer } from "./state";
 import type { StepId } from "../shared/protocol";
 
+export const DEFAULT_QUESTION = "包裹 PKG-20260918 为什么还没有入库？";
+
+export const SCENARIO_QUESTIONS = [
+  { question: DEFAULT_QUESTION, label: "正常场景" },
+  { question: "帮我看看包裹 PKG-404 为什么还没入库", label: "空数据" },
+  { question: "帮我看看包裹 PKG-TIMEOUT 为什么还没入库", label: "工具超时" },
+] as const;
+
 function App() {
-  const [question, setQuestion] = useState("包裹 PKG-20260918 为什么还没有入库？");
+  const [question, setQuestion] = useState(DEFAULT_QUESTION);
   const [state, dispatch] = useReducer(traceReducer, undefined, createInitialTraceState);
   const [selectedStepId, setSelectedStepId] = useState<StepId | null>(null);
   const [formError, setFormError] = useState<string>();
@@ -145,21 +153,18 @@ function App() {
           </button>
           <div className="query-examples">
             <span>测试场景</span>
-            {[
-              ["PKG-404", "空数据"],
-              ["PKG-TIMEOUT", "工具超时"],
-            ].map(([value, label]) => (
+            {SCENARIO_QUESTIONS.map(({ question: scenarioQuestion, label }) => (
               <button
                 type="button"
-                key={value}
+                key={scenarioQuestion}
                 disabled={running}
                 onClick={() => {
-                  setQuestion(value);
+                  setQuestion(scenarioQuestion);
                   setFormError(undefined);
                 }}
               >
                 <CornerDownRight size={12} />
-                {value}
+                {scenarioQuestion}
                 <small>{label}</small>
               </button>
             ))}

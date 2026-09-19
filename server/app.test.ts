@@ -160,7 +160,7 @@ describe("POST /api/diagnoses/stream", () => {
     const response = await request(app)
       .post("/api/diagnoses/stream")
       .send({
-        question: "包裹 PKG-404 为什么还没有入库？",
+        question: "帮我看看包裹 PKG-404 为什么还没入库",
       })
       .expect(200);
 
@@ -184,7 +184,7 @@ describe("POST /api/diagnoses/stream", () => {
     const response = await request(app)
       .post("/api/diagnoses/stream")
       .send({
-        question: "包裹 PKG-TIMEOUT 为什么还没有入库？",
+        question: "帮我看看包裹 PKG-TIMEOUT 为什么还没入库",
       })
       .expect(200);
 
