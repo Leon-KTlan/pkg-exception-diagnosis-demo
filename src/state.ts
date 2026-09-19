@@ -118,6 +118,7 @@ export const traceReducer = (
     return {
       ...state,
       status: action.status,
+      activeStepId: state.steps.find((step) => step.status === "ERROR")?.id ?? state.activeStepId,
       error: action.error,
       terminationReason: action.terminationReason,
       totalDurationMs: action.totalDurationMs,
@@ -208,6 +209,7 @@ export const traceReducer = (
       return {
         ...nextState,
         status: "FAILED",
+        activeStepId: nextState.steps.find((step) => step.status === "ERROR")?.id ?? nextState.activeStepId,
         error: payload.error,
         terminationReason: payload.terminationReason ?? "SERVER_ERROR",
         totalDurationMs: payload.totalDurationMs,
